@@ -21,17 +21,25 @@ CREATE TABLE wiki_page_revisions (
 		CHECK (min_classification IN ('Public','Internal','Confidential','Restricted')),
 
 	CONSTRAINT chk_wiki_page_revisions_revno
-		CHECK (revision_number >= 1),
-
-	-- One revision_number per facet (the COALESCE pattern from
-	-- page_facets, applied to the unique index).
-	CONSTRAINT uq_wiki_page_revisions_facet_revno
-		UNIQUE (page_id, min_classification, (COALESCE(persona_id, '00000000-0000-0000-0000-000000000000'::uuid)), revision_number)
+		CHECK (revision_number >= 1)
 );
 
 COMMENT ON TABLE  wiki_page_revisions IS 'Per-facet revision history per ADR 0007. Claims + citations attach to one revision.';
 
 CREATE INDEX ix_wiki_page_revisions_page ON wiki_page_revisions (page_id);
+
+-- One revision_number per facet. Postgres does not allow expressions
+-- inside an inline UNIQUE constraint, so the COALESCE collapse of NULL
+-- persona to the sentinel UUID is expressed as a UNIQUE INDEX. Behaves
+-- identically to the would-be constraint for INSERT conflict-detection
+-- (23505 still surfaces).
+CREATE UNIQUE INDEX uq_wiki_page_revisions_facet_revno
+	ON wiki_page_revisions (
+		page_id,
+		min_classification,
+		COALESCE(persona_id, '00000000-0000-0000-0000-000000000000'::uuid),
+		revision_number
+	);
 
 ALTER TABLE wiki_page_revisions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wiki_page_revisions FORCE  ROW LEVEL SECURITY;

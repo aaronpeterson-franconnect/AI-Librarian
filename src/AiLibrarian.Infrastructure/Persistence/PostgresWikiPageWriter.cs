@@ -27,7 +27,11 @@ namespace AiLibrarian.Infrastructure.Persistence;
 ///
 /// <para>The facet insert uses
 /// <c>ON CONFLICT DO NOTHING RETURNING ...</c> against the composite
-/// primary key <c>(page_id, min_classification, COALESCE(persona_id, '00..0'))</c>.
+/// primary key <c>(page_id, min_classification, persona_pk)</c>, where
+/// <c>persona_pk</c> is a STORED generated column that collapses NULL
+/// to the all-zero sentinel UUID (see migration 0021 -- Postgres
+/// rejects expressions inside PRIMARY KEY / UNIQUE constraint clauses,
+/// so the generated column is how the COALESCE pattern gets enforced).
 /// A missing return row means the facet already existed.</para>
 /// </summary>
 public sealed class PostgresWikiPageWriter : IWikiPageWriter
@@ -122,10 +126,16 @@ public sealed class PostgresWikiPageWriter : IWikiPageWriter
 
 		// Step 2: facet. Insert-or-leave on (page_id, classification, persona).
 		bool facetCreated;
+		// Conflict target is the column triple of the composite PK; the
+		// generated persona_pk column on page_facets is what carries the
+		// sentinel-collapsed persona key. Postgres won't accept the
+		// COALESCE expression as the conflict_target here even though
+		// the underlying value is identical -- the conflict_target must
+		// match the index column list verbatim.
 		const string insertFacetSql = """
 			INSERT INTO page_facets (page_id, min_classification, persona_id, body_markdown)
 			VALUES (@page, @class, @persona, '')
-			ON CONFLICT (page_id, min_classification, (COALESCE(persona_id, '00000000-0000-0000-0000-000000000000'::uuid)))
+			ON CONFLICT (page_id, min_classification, persona_pk)
 			DO NOTHING
 			RETURNING page_id
 			""";
