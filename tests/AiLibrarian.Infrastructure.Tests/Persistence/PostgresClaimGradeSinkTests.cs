@@ -169,14 +169,19 @@ public sealed class PostgresClaimGradeSinkTests : IClassFixture<RlsPostgresFixtu
 			chunkId = (Guid)(await cmd.ExecuteScalarAsync())!;
 		}
 
+		// Slug is randomized per-call: multiple tests in this class share
+		// the same testcontainer fixture, so a hardcoded slug collides
+		// with ux_wiki_pages_dept_slug_live on the second test.
+		var slug = $"test-page-{Guid.NewGuid():N}"[..30];
 		Guid pageId;
 		await using (var cmd = new NpgsqlCommand("""
 			INSERT INTO wiki_pages (department_id, slug, title)
-			VALUES (@dept, 'test-page', 'Test Page')
+			VALUES (@dept, @slug, 'Test Page')
 			RETURNING id
 			""", conn))
 		{
 			cmd.Parameters.AddWithValue("dept", RlsTestData.EngineeringDeptId);
+			cmd.Parameters.AddWithValue("slug", slug);
 			pageId = (Guid)(await cmd.ExecuteScalarAsync())!;
 		}
 

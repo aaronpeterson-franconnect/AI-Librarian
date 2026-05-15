@@ -270,22 +270,40 @@ public sealed class PostgresWikiPageWriter : IWikiPageWriter
 		await RlsSessionPusher.PushAsync(conn, RlsSessionContext.System(), cancellationToken).ConfigureAwait(false);
 
 		// Step 1: look up the soft-deleted row (the row we want to restore).
+		// The reader must be fully consumed (and disposed) before we run
+		// anything else against `conn` -- Npgsql does not multiplex
+		// commands on a single connection, so calling tx.CommitAsync
+		// while the reader is still alive throws
+		// NpgsqlOperationInProgressException. Hence the explicit
+		// using-block on the reader instead of a hoisted `await using
+		// var reader = ...`.
 		Guid departmentId;
 		string slug;
+		bool softDeletedRowExists;
 		await using (var lookupCmd = new NpgsqlCommand(
 			"SELECT department_id, slug FROM wiki_pages WHERE id = @id AND soft_deleted_at IS NOT NULL",
 			conn, tx))
 		{
 			lookupCmd.Parameters.AddWithValue("id", pageId);
 			await using var reader = await lookupCmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-			if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+			softDeletedRowExists = await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+			if (softDeletedRowExists)
 			{
-				await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
-				_logger.LogInformation("Restore page={PageId} NotFound (id unknown or already live)", pageId);
-				return new RestorePageResult(RestorePageOutcome.NotFound, ConflictingLivePageId: null);
+				departmentId = reader.GetGuid(0);
+				slug = reader.GetString(1);
 			}
-			departmentId = reader.GetGuid(0);
-			slug = reader.GetString(1);
+			else
+			{
+				departmentId = Guid.Empty;
+				slug = string.Empty;
+			}
+		}
+
+		if (!softDeletedRowExists)
+		{
+			await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+			_logger.LogInformation("Restore page={PageId} NotFound (id unknown or already live)", pageId);
+			return new RestorePageResult(RestorePageOutcome.NotFound, ConflictingLivePageId: null);
 		}
 
 		// Step 2: check for a live conflict on (department_id, slug).

@@ -145,8 +145,21 @@ public sealed class PostgresWikiProposalReader : IWikiProposalReader
 		var results = new List<WikiProposedRevision>();
 		await using var cmd = new NpgsqlCommand(sql, conn, tx);
 		cmd.Parameters.AddWithValue("limit", safeLimit);
-		cmd.Parameters.AddWithValue("decidedBy", (object?)decidedBy ?? DBNull.Value);
-		cmd.Parameters.AddWithValue("since", (object?)since ?? DBNull.Value);
+		// Postgres needs each parameter's type at parse time. When we
+		// pass DBNull via AddWithValue, Npgsql sends "unknown" and
+		// Postgres can't infer uuid/timestamptz from the
+		// "@param IS NULL OR column op @param" context (the IS NULL
+		// branch alone is ambiguous) -- it raises 42P08. Set the
+		// NpgsqlDbType explicitly so the parameter is typed even when
+		// its value is NULL.
+		cmd.Parameters.Add(new NpgsqlParameter("decidedBy", NpgsqlTypes.NpgsqlDbType.Uuid)
+		{
+			Value = (object?)decidedBy ?? DBNull.Value,
+		});
+		cmd.Parameters.Add(new NpgsqlParameter("since", NpgsqlTypes.NpgsqlDbType.TimestampTz)
+		{
+			Value = (object?)since ?? DBNull.Value,
+		});
 
 		await using (var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
 		{

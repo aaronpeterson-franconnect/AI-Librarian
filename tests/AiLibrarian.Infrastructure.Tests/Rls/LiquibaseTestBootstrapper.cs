@@ -1,4 +1,5 @@
 using System.Text;
+using System.Xml.Linq;
 
 using Npgsql;
 
@@ -60,14 +61,19 @@ internal static class LiquibaseTestBootstrapper
 			throw new DirectoryNotFoundException($"Changelog directory not found: {changelogDirectory}");
 		}
 
-		var files = Directory
-			.EnumerateFiles(changelogDirectory, "*.sql", SearchOption.TopDirectoryOnly)
-			.OrderBy(p => Path.GetFileName(p), StringComparer.Ordinal)
-			.ToList();
+		// Source of truth for replay order is master.xml — same file the
+		// production Liquibase runner reads. Lexical filename ordering
+		// is *almost* right for the top-level changelogs (numeric
+		// prefixes do the work) but breaks for the seed/ subdirectory:
+		// "persona-retrieval-profiles-v1.sql" < "personas-v1.sql" in
+		// ordinal order, yet the profiles UPDATE depends on the personas
+		// INSERT having already run. Pulling order from master.xml
+		// eliminates the drift between test bootstrap and production.
+		var files = ReadChangelogOrderFromMasterXml(changelogDirectory);
 
 		if (files.Count == 0)
 		{
-			throw new InvalidOperationException($"No .sql files in {changelogDirectory}.");
+			throw new InvalidOperationException($"No <include> entries in master.xml under {changelogDirectory}.");
 		}
 
 		await using var conn = new NpgsqlConnection(connectionString);
@@ -138,6 +144,46 @@ internal static class LiquibaseTestBootstrapper
 			Password = AppRolePassword,
 		};
 		return builder.ConnectionString;
+	}
+
+	/// <summary>
+	/// Parse <c>master.xml</c>'s <c>&lt;include file="..."/&gt;</c>
+	/// elements and resolve each to an absolute path under
+	/// <paramref name="changelogDirectory"/>. Returned in document order.
+	/// </summary>
+	internal static List<string> ReadChangelogOrderFromMasterXml(string changelogDirectory)
+	{
+		var masterPath = Path.Combine(changelogDirectory, "master.xml");
+		if (!File.Exists(masterPath))
+		{
+			throw new FileNotFoundException(
+				$"master.xml not found at {masterPath}; the test bootstrap reads include order from there.",
+				masterPath);
+		}
+
+		var doc = XDocument.Load(masterPath);
+		// Default namespace on databaseChangeLog; use local-name match
+		// so we're resilient to schema version bumps.
+		var includes = doc
+			.Descendants()
+			.Where(e => e.Name.LocalName == "include")
+			.Select(e => (string?)e.Attribute("file"))
+			.Where(f => !string.IsNullOrWhiteSpace(f))
+			.Select(f => Path.GetFullPath(Path.Combine(changelogDirectory, f!)))
+			.ToList();
+
+		// Sanity: every referenced file must exist. A missing include is
+		// almost certainly a forgotten commit -- fail loud rather than
+		// silently skip the seed.
+		var missing = includes.Where(p => !File.Exists(p)).ToList();
+		if (missing.Count > 0)
+		{
+			throw new FileNotFoundException(
+				"master.xml references files that don't exist on disk: "
+				+ string.Join(", ", missing));
+		}
+
+		return includes;
 	}
 
 	/// <summary>
