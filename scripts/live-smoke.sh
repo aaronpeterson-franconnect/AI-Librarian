@@ -58,12 +58,25 @@ echo "${A}" | grep -q '"eventSubtype":"system.audit.writer.ready"' \
 	|| fail "no system.audit.writer.ready in audit_events -- startup observability regressed"
 
 echo "=== STEP 3: seed engineering department via psql ==="
-docker exec "${PG_CONTAINER}" psql -U ailibrarian -d ailibrarian -q -v ON_ERROR_STOP=1 <<'SQL'
+# -i on docker exec keeps stdin open so the heredoc reaches psql.
+# Without it psql gets empty stdin, runs no SQL, and exits 0 -- a
+# silent no-op that's hard to spot because the next assertion is what
+# breaks. -v ON_ERROR_STOP=1 fails fast on any SQL error.
+docker exec -i "${PG_CONTAINER}" psql -U ailibrarian -d ailibrarian -q -v ON_ERROR_STOP=1 <<'SQL'
 SET app.is_authenticated = 'true';
 SET app.is_employee = 'true';
 INSERT INTO departments (id, name, display_name)
 VALUES ('11111111-1111-1111-1111-111111111111', 'engineering', 'Engineering')
 ON CONFLICT (name) DO NOTHING;
+
+-- Confirm the row landed BEFORE the script moves on -- otherwise an
+-- inert seed (e.g. -i stripped, heredoc swallowed elsewhere) lets the
+-- script reach STEP 4 and fail there with a confusing "RLS regressed"
+-- message. We'd rather see "seed did nothing" attributed at the
+-- correct step.
+SELECT count(*) AS engineering_rows
+  FROM departments
+ WHERE name = 'engineering';
 SQL
 pass "INSERT into departments under RLS session-var pushdown succeeded"
 
