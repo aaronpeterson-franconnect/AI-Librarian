@@ -9,8 +9,17 @@
 	</ItemGroup>
 
 	<ItemGroup>
+		<!--
+			SKILL.md is repo + build-output documentation only. Don't ship
+			it in publish output: when the IngestWorker pulls all three
+			skill projects transitively, every SKILL.md lands at the same
+			relative path /SKILL.md and dotnet publish errors with
+			NETSDK1152. CopyToPublishDirectory=Never sidesteps the
+			collision and keeps the container slimmer.
+		-->
 		<None Update="SKILL.md">
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<CopyToPublishDirectory>Never</CopyToPublishDirectory>
 		</None>
 	</ItemGroup>
 

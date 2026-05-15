@@ -16,8 +16,10 @@
 	</ItemGroup>
 
 	<ItemGroup>
+		<!-- See AiLibrarian.Skills.Markdown.csproj for the publish rationale. -->
 		<None Update="SKILL.md">
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<CopyToPublishDirectory>Never</CopyToPublishDirectory>
 		</None>
 	</ItemGroup>
 
