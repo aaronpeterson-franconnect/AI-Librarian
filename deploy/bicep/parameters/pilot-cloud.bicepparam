@@ -54,3 +54,17 @@ param postgresAdminPassword = readEnvironmentVariable('AILIB_PG_ADMIN_PASSWORD')
 // + ACR_USERNAME + ACR_PASSWORD as GitHub secrets so Release Images
 // dual-pushes to ACR).
 param deployContainerRegistry = false
+
+// Skip the data-plane RBAC role assignments (Key Vault Secrets User on
+// the vault, Storage Blob Data Contributor on the account, Service Bus
+// Data Owner on the namespace). Bicep writes these to grant the workload
+// identity passwordless access to the data resources -- a prod-grade
+// pattern that uses Key Vault references in the Container Apps secret
+// section. But role-assignment writes require Owner or User Access
+// Administrator on the subscription; a Contributor-only deployer (the
+// common case for personal-sandbox pilots) can't perform them. The
+// pilot uses connection strings wired via `az containerapp update
+// --set-env-vars` (see docs/dev/deploy-pilot-cloud.md step 6), which
+// doesn't need this RBAC. Flip back to true once the deployer is
+// elevated and you're ready to migrate to KV-reference-based config.
+param deployIdentityRbac = false

@@ -71,6 +71,9 @@ param deployContainerRegistry bool = false
 @description('Container Registry SKU. Pilot default Basic; Premium required for geo-replication / private endpoints.')
 param containerRegistrySkuName string = 'Basic'
 
+@description('When true (default), grant the workload identity data-plane RBAC on Key Vault, Storage, and Service Bus. Requires the deploying principal to hold Owner or User Access Administrator on the subscription. Set false for connection-string-only pilots where the deployer is Contributor-only; the workloads still function via the connection strings wired in post-deploy, but the passwordless / Key-Vault-reference path is unavailable until the RBAC is later granted.')
+param deployIdentityRbac bool = true
+
 var nameSuffix = uniqueString(resourceGroup().id, deployment().name)
 
 var commonTags = {
@@ -255,7 +258,7 @@ var roleStorageBlobDataContributor = subscriptionResourceId('Microsoft.Authoriza
 var roleServiceBusDataOwner = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '69a216fc-bcb6-47d8-8c73-093fc9353940')
 var roleAcrPull = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
 
-resource rbacKeyVaultSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource rbacKeyVaultSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployIdentityRbac) {
 	name: guid(resourceGroup().id, subscription().subscriptionId, keyVaultName, 'kv-secrets-user', nameSuffix)
 	scope: keyVaultExisting
 	properties: {
@@ -268,7 +271,7 @@ resource rbacKeyVaultSecretsUser 'Microsoft.Authorization/roleAssignments@2022-0
 	]
 }
 
-resource rbacStorageBlobDataContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource rbacStorageBlobDataContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployIdentityRbac) {
 	name: guid(resourceGroup().id, subscription().subscriptionId, storageAccountName, 'st-blob-contrib', nameSuffix)
 	scope: storageExisting
 	properties: {
@@ -281,7 +284,7 @@ resource rbacStorageBlobDataContributor 'Microsoft.Authorization/roleAssignments
 	]
 }
 
-resource rbacServiceBusDataOwner 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource rbacServiceBusDataOwner 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployIdentityRbac) {
 	name: guid(resourceGroup().id, subscription().subscriptionId, serviceBusNamespaceName, 'sb-data-owner', nameSuffix)
 	scope: serviceBusExisting
 	properties: {

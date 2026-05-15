@@ -251,6 +251,25 @@ Key Vault soft-delete keeps the vault name reserved for ~7 days. If
 you need to redeploy immediately, pass a different `namePrefix` in
 `pilot-cloud.bicepparam`.
 
+## What `deployIdentityRbac=false` defers
+
+`pilot-cloud.bicepparam` ships with `deployIdentityRbac=false`. This
+skips three role-assignment writes Bicep would otherwise perform: KV
+Secrets User on the vault, Storage Blob Data Contributor on the account,
+Service Bus Data Owner on the namespace. Granting them requires the
+deploying principal to hold Owner or User Access Administrator on the
+subscription -- Contributor isn't enough by Azure's role-separation
+design.
+
+For the pilot you don't need them: the runbook wires every workload
+via connection strings in step 6, which works without any data-plane
+RBAC on the managed identity. The trade-off is that you can't yet
+move Container App config to Key Vault references (the prod-grade
+pattern that hides connection strings behind `@Microsoft.KeyVault(...)`
+syntax) -- when you do migrate to KV references, you'll need to flip
+`deployIdentityRbac` to true and have someone elevate the deployer to
+Owner/UAA at that point.
+
 ## What's NOT in this pilot
 
 - **Azure OpenAI** — deliberately deferred for the first smoke. `/api/search/hybrid` and `/api/ask` return 503 until LLM keys are wired. To enable, add a `LlmGateway__Providers__azure-openai__*` env-var pass on the API container app after Azure OpenAI provisioning completes (24-72h lead time depending on region).
