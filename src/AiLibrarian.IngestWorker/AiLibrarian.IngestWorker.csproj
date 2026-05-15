@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+	<PropertyGroup>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<UserSecretsId>dotnet-AiLibrarian.IngestWorker-bc054859-eac2-426e-9ae4-cb8c06e40e00</UserSecretsId>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Azure.Identity" />
+		<PackageReference Include="Azure.Messaging.ServiceBus" />
+		<PackageReference Include="Azure.Storage.Blobs" />
+		<PackageReference Include="Microsoft.Extensions.Hosting" />
+		<PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
+		<PackageReference Include="Npgsql" />
+		<PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+		<PackageReference Include="OpenTelemetry.Instrumentation.Http" />
+		<PackageReference Include="Pgvector" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\AiLibrarian.Domain\AiLibrarian.Domain.csproj" />
+		<ProjectReference Include="..\AiLibrarian.Infrastructure\AiLibrarian.Infrastructure.csproj" />
+		<ProjectReference Include="..\AiLibrarian.LlmGateway\AiLibrarian.LlmGateway.csproj" />
+		<ProjectReference Include="..\AiLibrarian.Skills.Markdown\AiLibrarian.Skills.Markdown.csproj" />
+		<ProjectReference Include="..\AiLibrarian.Skills.Office\AiLibrarian.Skills.Office.csproj" />
+		<ProjectReference Include="..\AiLibrarian.Skills.Pdf\AiLibrarian.Skills.Pdf.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<InternalsVisibleTo Include="AiLibrarian.IngestWorker.Tests" />
+	</ItemGroup>
+
+</Project>

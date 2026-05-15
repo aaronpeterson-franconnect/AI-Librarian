@@ -1,0 +1,17 @@
+id: partial-cadence-but-not-cap
+claim_text: "The cascade-regeneration worker runs hourly by default and tackles up to 50 facets per tick."
+cited_chunks:
+  - chunk_id: c0140001-eeee-eeee-eeee-aaaaaaaaaaaa
+    text: |
+      WikiMaintenance:Interval defaults to one hour. The worker runs
+      on a PeriodicTimer; intervals below five minutes are clamped up
+      to five minutes to prevent runaway scheduling. The per-tick cap
+      is configured via a separate option (see WikiMaintenanceOptions
+      reference).
+human_verdict: Partial
+human_confidence: 0.85
+human_rationale: "Chunk supports the hourly cadence but doesn't state the per-tick cap value. Rule 4: compound claim, only one half supported."
+tags:
+  category: compound
+  difficulty: medium
+  verdict_class: partial

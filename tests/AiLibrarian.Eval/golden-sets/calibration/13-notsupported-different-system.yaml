@@ -1,0 +1,19 @@
+id: notsupported-different-system
+claim_text: "Source uploads are virus-scanned via Microsoft Defender for Cloud."
+cited_chunks:
+  - chunk_id: c0130001-dddd-dddd-dddd-aaaaaaaaaaaa
+    text: |
+      Source canonicalization pipeline:
+
+      1. Skills.Pdf converts PDF -> markdown via the Aspose pipeline.
+      2. Skills.Office handles Word and Excel via OpenXml.
+      3. Skills.Markdown passes through with normalization.
+
+      Each skill writes audit telemetry on entry and exit.
+human_verdict: NotSupported
+human_confidence: 0.95
+human_rationale: "Chunk describes the canonicalization pipeline, not virus scanning. The cited content does not address the claim at all."
+tags:
+  category: off_topic
+  difficulty: medium
+  verdict_class: not_supported

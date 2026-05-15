@@ -1,0 +1,88 @@
+# =============================================================================
+# AI Librarian .gitignore
+# =============================================================================
+# .NET build outputs and IDE artifacts; secrets-bearing local files;
+# tooling caches. Reviewed before every release.
+
+# Build outputs
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+[Oo]ut/
+artifacts/
+
+# Visual Studio / Rider / VS Code
+.vs/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/launch.json.template
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.userprefs
+
+# Resharper
+_ReSharper.Caches/
+_ReSharper*/
+*.[Rr]e[Ss]harper
+
+# NuGet
+*.nupkg
+*.snupkg
+**/packages/*
+!**/packages/build/
+project.lock.json
+project.fragment.lock.json
+.nuget/
+
+# .NET workloads / tools cache
+.config/dotnet-tools.json.lock
+
+# Test results
+[Tt]est[Rr]esult*/
+*.coverage
+*.coveragexml
+coverage/
+*.trx
+
+# Local secrets and config
+appsettings.Development.json
+appsettings.Local.json
+secrets.json
+.env
+*.env
+!*.env.template
+*.pfx
+*.snk
+*.publishsettings
+
+# User-secrets are stored outside the repo by default; this catches stragglers
+**/UserSecrets/
+
+# Azure CLI cache
+.azure/
+
+# Bicep build artifacts
+**/main.json
+**/*.bicep.json
+
+# Liquibase
+**/liquibase.properties
+liquibase.local.properties
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Cursor / agent / Claude Code
+.cursor/
+.claude/
+agent-transcripts/
+plans/
+
+# Local docker
+docker-compose.override.yml

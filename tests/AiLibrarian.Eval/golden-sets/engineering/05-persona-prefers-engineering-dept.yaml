@@ -1,0 +1,23 @@
+id: persona-prefers-engineering-dept
+query: What's the on-call rotation for the ingest service?
+persona: engineering
+classification_scope: Internal
+# The Engineering department owns the ingest service and its on-call
+# rotation page. A related "Customer Success on-call" page lives in
+# the Customer Success department and shares vocabulary ("on-call",
+# "rotation"). Under neutral retrieval the CS page can leak into the
+# top results. Engineering persona's crossDepartmentBoost
+# (sameDepartment=1.3, crossDepartmentInternal=1.0) should keep the
+# Engineering page above the CS page.
+expected_chunk_ids:
+  - 50000001-1111-1111-1111-aaaaaaaaaaaa
+expected_citations:
+  - source_id: 50000001-2222-2222-2222-aaaaaaaaaaaa
+    span_anchor: '{"type":"markdown","paragraphIndex":0}'
+    min_confidence: 0.7
+must_refuse: false
+tags:
+  category: persona_delta
+  area: ops
+  dimension: cross_department_boost
+  expected_lift: "same-dept-over-cross-dept"

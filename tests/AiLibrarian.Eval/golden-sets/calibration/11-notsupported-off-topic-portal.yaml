@@ -1,0 +1,16 @@
+id: notsupported-off-topic-portal
+claim_text: "The ingest worker processes 100 messages per second under normal load."
+cited_chunks:
+  - chunk_id: c0110001-bbbb-bbbb-bbbb-aaaaaaaaaaaa
+    text: |
+      The Blazor portal upload endpoint accepts source files up to
+      25 MB. Larger files are rejected with a 413; operators wanting
+      to ingest a larger document should split it or use the worker's
+      bulk import command.
+human_verdict: NotSupported
+human_confidence: 0.95
+human_rationale: "Chunk discusses the portal upload size limit, not the worker throughput. Off-topic — does not address the claim."
+tags:
+  category: off_topic
+  difficulty: easy
+  verdict_class: not_supported

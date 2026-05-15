@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<!--
+		WikiMaintainer. LLM-driven agent that produces wiki content per
+		ADR 0006 + ADR 0007. Two-pass orchestration: Pass 1 prompts the
+		LLM to synthesize prose with inline [chunk:GUID] citation
+		tokens; Pass 2 deterministically extracts claims + citations
+		from the prose and runs them through ICitationValidator before
+		committing via IWikiRevisionWriter.
+
+		The project deliberately depends only on Domain abstractions +
+		LlmGateway.Abstractions (no Infrastructure reference) so every
+		collaborator is swappable for tests. The Infrastructure project
+		provides the Postgres-backed writer + chunk lookup.
+	-->
+
+	<ItemGroup>
+		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+		<PackageReference Include="Microsoft.Extensions.Options" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\AiLibrarian.Domain\AiLibrarian.Domain.csproj" />
+		<ProjectReference Include="..\AiLibrarian.LlmGateway.Abstractions\AiLibrarian.LlmGateway.Abstractions.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<InternalsVisibleTo Include="AiLibrarian.WikiMaintainer.Tests" />
+	</ItemGroup>
+
+</Project>

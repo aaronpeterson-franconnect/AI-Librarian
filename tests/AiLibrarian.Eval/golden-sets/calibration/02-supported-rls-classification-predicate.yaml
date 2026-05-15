@@ -1,0 +1,17 @@
+id: supported-rls-classification-predicate
+claim_text: "Confidential sources require dept membership of the owning department to be readable."
+cited_chunks:
+  - chunk_id: c0020001-2222-2222-2222-aaaaaaaaaaaa
+    text: |
+      The read predicate gates Confidential and Restricted rows behind
+      two checks: (a) the caller is authenticated, and (b) the caller's
+      department lattice includes the row's department_id. Public rows
+      bypass both checks; Internal rows additionally require
+      app_is_employee() to be true.
+human_verdict: Supported
+human_confidence: 0.9
+human_rationale: "Chunk's predicate description directly grounds the dept-membership requirement for Confidential rows."
+tags:
+  category: factual
+  area: rls
+  verdict_class: supported

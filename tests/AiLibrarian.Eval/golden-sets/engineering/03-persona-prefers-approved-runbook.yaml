@@ -1,0 +1,22 @@
+id: persona-prefers-approved-runbook
+query: How do we restart the staging Postgres replica after a failover?
+persona: engineering
+classification_scope: Internal
+# The expected chunk is the librarian-approved runbook (sources.approved_at
+# is non-null). A draft revision of the same runbook also exists in the
+# corpus; under neutral hybrid retrieval the draft might rank close to or
+# above the approved version because they share the same vocabulary.
+# Engineering persona's authority bias (current=1.4, draft=0.6) should
+# push the approved version above the draft.
+expected_chunk_ids:
+  - 30000001-1111-1111-1111-aaaaaaaaaaaa
+expected_citations:
+  - source_id: 30000001-2222-2222-2222-aaaaaaaaaaaa
+    span_anchor: '{"type":"markdown","paragraphIndex":2}'
+    min_confidence: 0.8
+must_refuse: false
+tags:
+  category: persona_delta
+  area: ops
+  dimension: authority_bias
+  expected_lift: "approved-over-draft"

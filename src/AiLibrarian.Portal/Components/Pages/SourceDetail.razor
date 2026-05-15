@@ -1,0 +1,146 @@
+@page "/sources/{Id:guid}"
+@rendermode InteractiveServer
+
+@using AiLibrarian.Portal.Services
+
+@inject IAiLibrarianApiClient Api
+@inject NavigationManager Nav
+
+<PageTitle>Source detail</PageTitle>
+
+<h1>Source detail</h1>
+
+<p>
+	<a class="btn btn-sm btn-outline-secondary" href="/sources">← All sources</a>
+</p>
+
+@if (_loadError is not null)
+{
+	<div class="alert alert-warning" role="alert">@_loadError</div>
+}
+else if (_state == LoadState.Loading)
+{
+	<p><em>Loading…</em></p>
+}
+else if (_state == LoadState.NotFound)
+{
+	<div class="alert alert-secondary" role="alert">
+		<strong>Not found.</strong> The source either doesn't exist, was
+		soft-deleted, or RLS hides it from the current caller (the API
+		treats those three cases as indistinguishable so callers can't
+		probe).
+	</div>
+}
+else if (_source is not null)
+{
+	<dl class="row">
+		<dt class="col-sm-3">Id</dt>
+		<dd class="col-sm-9"><code>@_source.Id</code></dd>
+
+		<dt class="col-sm-3">Title</dt>
+		<dd class="col-sm-9">@_source.Title</dd>
+
+		<dt class="col-sm-3">Department</dt>
+		<dd class="col-sm-9"><code>@_source.DepartmentId</code></dd>
+
+		<dt class="col-sm-3">Classification</dt>
+		<dd class="col-sm-9">@_source.Classification</dd>
+
+		<dt class="col-sm-3">Status</dt>
+		<dd class="col-sm-9">@_source.Status</dd>
+
+		<dt class="col-sm-3">Content type</dt>
+		<dd class="col-sm-9"><code>@_source.ContentType</code></dd>
+
+		<dt class="col-sm-3">SHA-256</dt>
+		<dd class="col-sm-9">
+			@if (string.IsNullOrEmpty(_source.ChecksumSha256))
+			{
+				<em>(not yet computed by the worker)</em>
+			}
+			else
+			{
+				<code>@_source.ChecksumSha256</code>
+			}
+		</dd>
+
+		<dt class="col-sm-3">Size</dt>
+		<dd class="col-sm-9">
+			@if (_source.SizeBytes is { } bytes)
+			{
+				@($"{bytes:N0} bytes")
+			}
+			else
+			{
+				<em>(not yet computed)</em>
+			}
+		</dd>
+
+		<dt class="col-sm-3">Blob URI</dt>
+		<dd class="col-sm-9">
+			@if (string.IsNullOrEmpty(_source.Uri))
+			{
+				<em>(none)</em>
+			}
+			else
+			{
+				<code class="text-break">@_source.Uri</code>
+			}
+		</dd>
+
+		<dt class="col-sm-3">Contributor</dt>
+		<dd class="col-sm-9"><code>@_source.ContributedBy</code></dd>
+
+		<dt class="col-sm-3">Approved by</dt>
+		<dd class="col-sm-9">@(_source.ApprovedBy?.ToString() ?? "(pending)")</dd>
+
+		<dt class="col-sm-3">Approved at</dt>
+		<dd class="col-sm-9">@(_source.ApprovedAt?.ToLocalTime().ToString("u") ?? "(pending)")</dd>
+
+		<dt class="col-sm-3">Created</dt>
+		<dd class="col-sm-9">@_source.CreatedAt.ToLocalTime().ToString("u")</dd>
+
+		<dt class="col-sm-3">Updated</dt>
+		<dd class="col-sm-9">@_source.UpdatedAt.ToLocalTime().ToString("u")</dd>
+	</dl>
+}
+
+@code {
+	private enum LoadState
+	{
+		Loading,
+		Found,
+		NotFound,
+	}
+
+	[Parameter]
+	public Guid Id { get; set; }
+
+	private SourceListItem? _source;
+	private LoadState _state = LoadState.Loading;
+	private string? _loadError;
+
+	protected override async Task OnParametersSetAsync()
+	{
+		_state = LoadState.Loading;
+		_source = null;
+		_loadError = null;
+
+		try
+		{
+			// No ConfigureAwait(false): keep the continuation on Blazor's
+			// dispatcher so the render-state update below runs on the
+			// component's render thread.
+			_source = await Api.GetSourceAsync(Id);
+			_state = _source is null ? LoadState.NotFound : LoadState.Found;
+		}
+		catch (HttpRequestException ex)
+		{
+			_loadError = ex.Message;
+		}
+		catch (Exception ex)
+		{
+			_loadError = ex.Message;
+		}
+	}
+}

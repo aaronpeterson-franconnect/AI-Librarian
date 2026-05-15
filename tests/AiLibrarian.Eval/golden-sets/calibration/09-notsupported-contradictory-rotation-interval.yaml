@@ -1,0 +1,16 @@
+id: notsupported-contradictory-rotation-interval
+claim_text: "Production Postgres passwords rotate every 14 days."
+cited_chunks:
+  - chunk_id: c0090001-9999-9999-9999-aaaaaaaaaaaa
+    text: |
+      Production credentials rotate on a 7-day cadence — half the
+      staging interval. The shorter window is a deliberate tradeoff:
+      higher rotation traffic for tighter blast-radius on a leaked
+      credential.
+human_verdict: NotSupported
+human_confidence: 1.0
+human_rationale: "Claim says 14 days; chunk says 7 days. Direct contradiction."
+tags:
+  category: contradiction
+  difficulty: easy
+  verdict_class: not_supported

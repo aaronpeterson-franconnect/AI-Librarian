@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<!--
+		Quality — citation validator, LLM-as-judge claim grader, and
+		dangling-citation detector. Lives in its own project so that
+		the LLM judge (which imports IChatProvider) doesn't drag the
+		Semantic Kernel transitive dependency into Domain or callers
+		that only want the mechanical validator. Per ADR 0007.
+	-->
+
+	<ItemGroup>
+		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+		<PackageReference Include="Microsoft.Extensions.Options" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\AiLibrarian.Domain\AiLibrarian.Domain.csproj" />
+		<ProjectReference Include="..\AiLibrarian.LlmGateway.Abstractions\AiLibrarian.LlmGateway.Abstractions.csproj" />
+	</ItemGroup>
+
+</Project>

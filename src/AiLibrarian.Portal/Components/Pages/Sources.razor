@@ -1,0 +1,86 @@
+@page "/sources"
+@rendermode InteractiveServer
+
+@using AiLibrarian.Portal.Services
+
+@inject IAiLibrarianApiClient Api
+
+<PageTitle>Sources</PageTitle>
+
+<h1>Sources</h1>
+
+<p class="text-muted">
+	Recently created sources visible to the calling RLS context. Phase 1
+	shows the most recent 25 across every authorized department.
+</p>
+
+@if (_loadError is not null)
+{
+	<div class="alert alert-warning" role="alert">
+		<strong>Could not load sources.</strong> @_loadError
+		<div class="form-text mt-1">
+			Common causes: the API isn't running at <code>Api:BaseUrl</code>,
+			or <code>ConnectionStrings:Postgres</code> isn't configured.
+		</div>
+	</div>
+}
+else if (_loaded is null)
+{
+	<p><em>Loading…</em></p>
+}
+else if (_loaded.Items.Count == 0)
+{
+	<p><em>No sources are visible yet.</em> Try the <a href="/upload">Upload</a> page.</p>
+}
+else
+{
+	<table class="table table-striped">
+		<thead>
+			<tr>
+				<th>Title</th>
+				<th>Classification</th>
+				<th>Status</th>
+				<th>Type</th>
+				<th>Created</th>
+				<th></th>
+			</tr>
+		</thead>
+		<tbody>
+			@foreach (var s in _loaded.Items)
+			{
+				<tr>
+					<td>@s.Title</td>
+					<td>@s.Classification</td>
+					<td>@s.Status</td>
+					<td><code>@s.ContentType</code></td>
+					<td>@s.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+					<td><a class="btn btn-sm btn-outline-primary" href="@($"/sources/{s.Id:D}")">Detail</a></td>
+				</tr>
+			}
+		</tbody>
+	</table>
+}
+
+@code {
+	private SourcesPage? _loaded;
+	private string? _loadError;
+
+	protected override async Task OnInitializedAsync()
+	{
+		try
+		{
+			// No ConfigureAwait(false): keep the continuation on Blazor's
+			// dispatcher so any implicit StateHasChanged that follows
+			// runs on the component's render thread.
+			_loaded = await Api.ListSourcesAsync(departmentId: null, limit: 25, offset: 0);
+		}
+		catch (HttpRequestException ex)
+		{
+			_loadError = ex.Message;
+		}
+		catch (Exception ex)
+		{
+			_loadError = ex.Message;
+		}
+	}
+}

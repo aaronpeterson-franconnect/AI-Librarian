@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<!--
+		Domain — pure POCOs, value objects, enums, domain primitives, and skill contracts (ADR 0009).
+		No external dependencies; the rest of the solution depends on this.
+	-->
+
+</Project>

@@ -1,0 +1,18 @@
+id: supported-audit-append-only
+claim_text: "The audit_events table rejects UPDATE and DELETE statements via a database trigger."
+cited_chunks:
+  - chunk_id: c0030001-3333-3333-3333-aaaaaaaaaaaa
+    text: |
+      audit_events is append-only. A BEFORE UPDATE OR DELETE trigger
+      raises an exception with SQLSTATE 'AU001' on any attempt to
+      mutate an existing row. Inserts are unrestricted (the RLS
+      policy still applies). Operators who need to redact a row use
+      the documented redaction procedure, which writes a new row
+      pointing at the original.
+human_verdict: Supported
+human_confidence: 1.0
+human_rationale: "Chunk explicitly describes the BEFORE UPDATE OR DELETE trigger that blocks the operations the claim mentions."
+tags:
+  category: factual
+  area: audit
+  verdict_class: supported

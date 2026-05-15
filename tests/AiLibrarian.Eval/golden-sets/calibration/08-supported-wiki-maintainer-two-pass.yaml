@@ -1,0 +1,23 @@
+id: supported-wiki-maintainer-two-pass
+claim_text: "The Wiki Maintainer uses a two-pass pipeline: Pass 1 LLM synthesis with inline [chunk:GUID] tokens, Pass 2 deterministic claim+citation extraction."
+cited_chunks:
+  - chunk_id: c0080001-8888-8888-8888-aaaaaaaaaaaa
+    text: |
+      WikiMaintainer pipeline:
+
+      Pass 1: call IChatProvider with the topic + source pool. The LLM
+      emits markdown prose annotated with inline `[chunk:GUID]`
+      tokens at the end of each cited sentence.
+
+      Pass 2: Pass2CitationExtractor walks the prose deterministically,
+      splitting on sentence terminators and extracting the [chunk:GUID]
+      tokens into Claim + Citation records. No second LLM call.
+
+      Pass 2 output feeds ICitationValidator, then IWikiRevisionWriter.
+human_verdict: Supported
+human_confidence: 1.0
+human_rationale: "Chunk describes the exact two-pass shape, the inline token format, and the deterministic Pass-2 extractor named in the claim."
+tags:
+  category: factual
+  area: wiki
+  verdict_class: supported

@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+	AI Librarian — Liquibase master changelog.
+	Each include below is a "formatted SQL" file with one or more
+	changeSets. Order is dependency-ordered; do not reorder.
+-->
+<databaseChangeLog
+	xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+	                    https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.27.xsd">
+
+	<!-- Phase 0 — Foundations -->
+	<include file="0000-extensions.sql" relativeToChangelogFile="true"/>
+	<include file="0001-departments.sql" relativeToChangelogFile="true"/>
+	<include file="0002-users.sql" relativeToChangelogFile="true"/>
+	<include file="0003-user-authorizations.sql" relativeToChangelogFile="true"/>
+	<include file="0004-sources.sql" relativeToChangelogFile="true"/>
+	<include file="0005-source-shares.sql" relativeToChangelogFile="true"/>
+	<include file="0006-audit-events.sql" relativeToChangelogFile="true"/>
+
+	<!-- Persona schema (ADR 0014, 0015, 0016) -->
+	<include file="0010-personas.sql" relativeToChangelogFile="true"/>
+	<include file="0011-persona-memberships.sql" relativeToChangelogFile="true"/>
+	<include file="0012-persona-action-records.sql" relativeToChangelogFile="true"/>
+	<include file="0013-persona-action-outcomes.sql" relativeToChangelogFile="true"/>
+	<include file="0014-source-chunks.sql" relativeToChangelogFile="true"/>
+	<include file="0015-source-chunks-embedding.sql" relativeToChangelogFile="true"/>
+	<include file="0016-source-chunks-search-document.sql" relativeToChangelogFile="true"/>
+
+	<!-- Phase 2 wiki schema (ADR 0006, ADR 0007). LLM-authored only -- no
+	     human-direct writes today; the Wiki Maintainer skill plugin lands
+	     in a follow-up slice. The schema arrives first so existing wiki
+	     consumers (LlmClaimGrader sink, dangling-citation detector) have
+	     somewhere to persist. -->
+	<include file="0020-wiki-pages.sql" relativeToChangelogFile="true"/>
+	<include file="0021-page-facets.sql" relativeToChangelogFile="true"/>
+	<include file="0022-wiki-page-revisions.sql" relativeToChangelogFile="true"/>
+	<include file="0023-wiki-claims.sql" relativeToChangelogFile="true"/>
+	<include file="0024-wiki-claim-citations.sql" relativeToChangelogFile="true"/>
+	<include file="0025-wiki-claim-grades.sql" relativeToChangelogFile="true"/>
+	<include file="0026-wiki-dangling-citations-fn.sql" relativeToChangelogFile="true"/>
+
+	<!-- Wiki page soft-delete (ADR 0008) + slug-reuse partial unique. -->
+	<include file="0027-wiki-pages-soft-delete.sql" relativeToChangelogFile="true"/>
+
+	<!-- Source-type taxonomy column (ADR 0015 sourceTypeWeights). -->
+	<include file="0028-sources-source-type.sql" relativeToChangelogFile="true"/>
+
+	<!-- Phase 2.5 approval queue for locked pages (ADR 0006 Q13). -->
+	<include file="0030-wiki-proposed-revisions.sql" relativeToChangelogFile="true"/>
+
+	<!-- All RLS predicates centralized so reviewers see the access model in one place. -->
+	<include file="0099-rls-policies.sql" relativeToChangelogFile="true"/>
+
+	<!-- Phase 1 hardening — fixes for issues caught by the RLS chaos battery. -->
+	<include file="0100-fix-source-shares-rls-recursion.sql" relativeToChangelogFile="true"/>
+
+	<!-- Phase 1.5 Entra — JIT user provisioning policies. -->
+	<include file="0101-users-self-provisioning.sql" relativeToChangelogFile="true"/>
+
+	<!-- Phase 2 wiki RLS — separate file so 0099 stays focused on the
+	     Phase 0/1 read-and-write predicates. Depends on the wiki tables
+	     existing (0020-0026). -->
+	<include file="0102-wiki-rls.sql" relativeToChangelogFile="true"/>
+
+	<!-- Phase 2.5 approval queue RLS. -->
+	<include file="0103-wiki-proposed-revisions-rls.sql" relativeToChangelogFile="true"/>
+
+	<!-- Wiki page soft-delete RLS update (depends on 0027 + 0102). -->
+	<include file="0104-wiki-pages-soft-delete-rls.sql" relativeToChangelogFile="true"/>
+
+	<!-- Seed data — idempotent reference rows. -->
+	<include file="seed/personas-v1.sql" relativeToChangelogFile="true"/>
+	<include file="seed/persona-retrieval-profiles-v1.sql" relativeToChangelogFile="true"/>
+	<include file="seed/persona-synthesis-styles-v1.sql" relativeToChangelogFile="true"/>
+
+</databaseChangeLog>

@@ -1,0 +1,15 @@
+id: unverifiable-vague-gesture
+claim_text: "The ingest worker drains its queue at roughly 100 messages per second under normal load."
+cited_chunks:
+  - chunk_id: c0190001-4444-5555-6666-aaaaaaaaaaaa
+    text: |
+      Performance: the worker is fast enough for the pilot's traffic
+      shape. Throughput depends on chunk size, embedding latency,
+      and the upstream LLM gateway's rate limits.
+human_verdict: Unverifiable
+human_confidence: 0.85
+human_rationale: "Chunk gestures at performance without naming any number. The claim's 100 msg/s figure cannot be verified or refuted from this content. Rule 3: insufficient."
+tags:
+  category: vague
+  difficulty: medium
+  verdict_class: unverifiable

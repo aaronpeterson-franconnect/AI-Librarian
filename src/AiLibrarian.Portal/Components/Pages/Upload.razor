@@ -1,0 +1,503 @@
+@page "/upload"
+@rendermode InteractiveServer
+
+@using AiLibrarian.Domain
+@using AiLibrarian.Portal.Services
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.AspNetCore.Hosting
+@using Microsoft.Extensions.Hosting
+@using Microsoft.Extensions.Options
+
+@inject IAiLibrarianApiClient Api
+@inject IOptions<PortalOptions> PortalOptionsAccessor
+@inject IPortalUserContext UserContext
+@inject IWebHostEnvironment Env
+@inject NavigationManager Nav
+
+<PageTitle>Upload source</PageTitle>
+
+<h1>Upload a source file</h1>
+
+<p class="text-muted">
+	Files are sent to the Librarian API
+	(<code>POST /api/portal/sources/upload</code>) and stored in Azure Blob
+	Storage. The API also creates a <code>sources</code> row so the ingest
+	worker has something to attach chunks to. Queue ingest separately via
+	<code>POST /api/ingest/enqueue</code> or MCP <code>enqueue_source</code>.
+</p>
+
+<div class="row g-3">
+	<div class="col-md-8">
+		<label class="form-label" for="dept-select">Department</label>
+		@if (_loadingDepartments)
+		{
+			<p class="text-muted mb-0"><em>Loading departments&hellip;</em></p>
+		}
+		else if (_departments is not null && _departments.Count > 0)
+		{
+			<select id="dept-select" class="form-select" @bind="_departmentIdInput" disabled="@_busy">
+				<option value="">-- pick a department --</option>
+				@foreach (var d in _departments)
+				{
+					<option value="@d.Id.ToString("D")">@d.DisplayName</option>
+				}
+			</select>
+			<div class="form-text">
+				Pre-selected from <code>Portal:DefaultDepartmentId</code> when set.
+			</div>
+		}
+		else
+		{
+			<input id="dept-input" class="form-control" type="text" @bind="_departmentIdInput" placeholder="00000000-0000-0000-0000-000000000000" disabled="@_busy" />
+			<div class="form-text">
+				@if (!string.IsNullOrEmpty(_departmentLoadError))
+				{
+					<span class="text-warning">Could not load departments (@_departmentLoadError). Enter a GUID manually.</span>
+				}
+				else
+				{
+					<span>No departments visible to your RLS context. Enter a GUID manually.</span>
+				}
+			</div>
+		}
+	</div>
+
+	<div class="col-md-4">
+		<label class="form-label" for="cls-select">Classification</label>
+		<select id="cls-select" class="form-select" @bind="_classification">
+			<option value="Public">Public</option>
+			<option value="Internal">Internal</option>
+			<option value="Confidential">Confidential</option>
+			<option value="Restricted">Restricted</option>
+		</select>
+	</div>
+
+	<div class="col-md-12">
+		<label class="form-label" for="title-input">Title (optional)</label>
+		<input id="title-input" class="form-control" type="text" @bind="_title" placeholder="Defaults to file name" />
+	</div>
+
+	@if (UserContext.EntraEnabled)
+	{
+		<div class="col-md-12">
+			<label class="form-label">Contributor</label>
+			<p class="form-control-plaintext mb-0">
+				<strong>@(string.IsNullOrEmpty(UserContext.DisplayName) ? "(not signed in)" : UserContext.DisplayName)</strong>
+				<small class="text-muted ms-2">Resolved from your Entra <code>oid</code> claim by the API.</small>
+			</p>
+		</div>
+	}
+	else
+	{
+		<div class="col-md-12">
+			<label class="form-label" for="contributor-input">Contributor (dev escape hatch)</label>
+			@if (_showDevContributorDropdown)
+			{
+				<select id="contributor-input" class="form-select" @bind="_contributorIdInput" disabled="@_busy">
+					@foreach (var c in _devContributors)
+					{
+						<option value="@c.Id">@c.DisplayName</option>
+					}
+				</select>
+				<div class="form-text">
+					Pick a seeded test identity. Add or remove entries via
+					<code>Portal:DevContributors</code> in
+					<code>appsettings.Development.json</code>. This dropdown
+					disappears once Entra sign-in is wired (the API reads
+					the <code>oid</code> claim instead).
+				</div>
+			}
+			else
+			{
+				<input id="contributor-input" class="form-control" type="text" @bind="_contributorIdInput" placeholder="00000000-0000-0000-0000-000000000000" disabled="@_busy" />
+				<div class="form-text">
+					Used only when neither Entra nor a DevContributors roster is configured.
+				</div>
+			}
+		</div>
+	}
+
+	<div class="col-md-12">
+		<label class="form-label" for="file-input">File</label>
+		<InputFile id="file-input" OnChange="OnFileChange" class="form-control" disabled="@_busy" />
+		<div class="form-text">
+			Max @(_maxBytes / (1024 * 1024)) MB.
+			@if (_fileBytes is not null)
+			{
+				<span class="text-success">
+					Selected: <strong>@_fileName</strong> (@FormatBytes(_fileSize))@(string.IsNullOrEmpty(_fileContentType) ? string.Empty : $", {_fileContentType}")
+				</span>
+			}
+		</div>
+	</div>
+
+	<div class="col-md-12">
+		<button type="button" class="btn btn-primary" @onclick="OnSubmit" disabled="@(!_canSubmit)">
+			@if (_busy)
+			{
+				<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+				<span>Uploading&hellip;</span>
+			}
+			else
+			{
+				<span>Upload</span>
+			}
+		</button>
+
+		@if (_fileBytes is not null && !_busy)
+		{
+			<button type="button" class="btn btn-link" @onclick="OnClearSelection">
+				Clear selection
+			</button>
+		}
+	</div>
+</div>
+
+@if (!string.IsNullOrEmpty(_message))
+{
+	<div class="mt-3 alert @_alertClass" role="alert">
+		@_message
+		@if (_uploadedSourceId is { } sid)
+		{
+			<div class="mt-2">
+				<a class="btn btn-sm btn-outline-primary" href="@($"/sources/{sid:D}")">View source</a>
+			</div>
+		}
+	</div>
+}
+
+@code {
+	private const long _maxBytes = 50L * 1024 * 1024;
+
+	private string _departmentIdInput = string.Empty;
+	private string _contributorIdInput = string.Empty;
+	private string _title = string.Empty;
+	private string _classification = "Internal";
+
+	private string _message = string.Empty;
+	private string _alertClass = "alert-secondary";
+	private bool _busy;
+	private Guid? _uploadedSourceId;
+
+	// Department dropdown state. Loaded from GET /api/departments via the
+	// typed API client. On load failure (API down, Postgres unconfigured)
+	// we fall back to a GUID text input so the upload form stays usable.
+	private IReadOnlyList<DepartmentListItem>? _departments;
+	private bool _loadingDepartments = true;
+	private string _departmentLoadError = string.Empty;
+
+	// Dev-mode contributor dropdown state. Sourced from
+	// Portal:DevContributors in appsettings; rendered only when the
+	// Portal is running in the Development environment AND at least one
+	// entry is configured. Falls back to the GUID text input otherwise,
+	// which is also what production environments get.
+	private IReadOnlyList<DevContributor> _devContributors = Array.Empty<DevContributor>();
+	private bool _showDevContributorDropdown;
+
+	protected override async Task OnInitializedAsync()
+	{
+		var opts = PortalOptionsAccessor.Value;
+
+		if (!string.IsNullOrWhiteSpace(opts.DefaultClassification))
+		{
+			_classification = opts.DefaultClassification;
+		}
+
+		// Contributor source-of-truth: IPortalUserContext. In Entra mode
+		// the dropdown is hidden and the API resolves the contributor
+		// from the bearer token's oid claim, so we don't bind anything
+		// here. In dev mode the user context exposes the same
+		// DevContributor roster the upload page used to read directly.
+		if (!UserContext.EntraEnabled)
+		{
+			_devContributors = UserContext.SelectableContributors
+				.Where(c => Guid.TryParse(c.Id, out _))
+				.ToList();
+			_showDevContributorDropdown = _devContributors.Count > 0;
+
+			// Bind the dropdown's _contributorIdInput to the context's
+			// current selection so the two stay in sync.
+			_contributorIdInput = UserContext.ContributorId;
+			if (_showDevContributorDropdown
+				&& !string.IsNullOrEmpty(_contributorIdInput)
+				&& !_devContributors.Any(c => string.Equals(c.Id, _contributorIdInput, StringComparison.OrdinalIgnoreCase)))
+			{
+				_contributorIdInput = _devContributors[0].Id;
+			}
+		}
+
+		try
+		{
+			// No ConfigureAwait(false): Blazor event handlers must stay on
+			// the component's dispatcher so any subsequent StateHasChanged
+			// (implicit via component lifecycle, or explicit below) runs
+			// on the right thread. ConfigureAwait(false) is correct in
+			// library code; Razor components are the consumer side.
+			_departments = await Api.ListDepartmentsAsync();
+		}
+		catch (HttpRequestException ex)
+		{
+			_departmentLoadError = ex.Message;
+		}
+		catch (Exception ex)
+		{
+			_departmentLoadError = ex.Message;
+		}
+		finally
+		{
+			_loadingDepartments = false;
+		}
+
+		// Decide the initial selection:
+		//   1. If a configured default department id is in the loaded list, pick it.
+		//   2. Else if exactly one department is visible, pick it.
+		//   3. Else leave blank (the form gates upload on a populated value).
+		if (_departments is { Count: > 0 })
+		{
+			if (Guid.TryParse(opts.DefaultDepartmentId, out var configuredId)
+				&& _departments.Any(d => d.Id == configuredId))
+			{
+				_departmentIdInput = configuredId.ToString("D");
+			}
+			else if (_departments.Count == 1)
+			{
+				_departmentIdInput = _departments[0].Id.ToString("D");
+			}
+		}
+		else if (string.IsNullOrEmpty(_departmentIdInput))
+		{
+			// Dropdown failed to load — fall back to the configured default
+			// in the manual-GUID input so the user isn't forced to retype.
+			_departmentIdInput = opts.DefaultDepartmentId;
+		}
+	}
+
+	// Buffered file payload captured at selection time. Blazor Server's
+	// IBrowserFile.OpenReadStream() is only reliably callable from within
+	// the same event handler that received the file -- calling it later
+	// from a button's @onclick terminates the circuit with a generic
+	// "unhandled exception" message. So we copy the bytes into memory
+	// inside OnFileChange (when the stream is valid) and upload from the
+	// memory copy in OnSubmit. The 50 MB max is the size cap that gates
+	// this approach; larger files would need a temp-file or streaming
+	// upload rewrite.
+	private byte[]? _fileBytes;
+	private string _fileName = string.Empty;
+	private string? _fileContentType;
+	private long _fileSize;
+
+	// True when the form is ready to submit: file is buffered, not busy,
+	// and a non-empty department selection exists. Classification + title
+	// validation runs at submit time; we don't gate the button on those.
+	private bool _canSubmit =>
+		!_busy
+		&& _fileBytes is not null
+		&& !string.IsNullOrWhiteSpace(_departmentIdInput);
+
+	private async Task OnFileChange(InputFileChangeEventArgs e)
+	{
+		// New file selection clears any prior "uploaded" / error state so
+		// the previous success banner doesn't leak into the next attempt.
+		_uploadedSourceId = null;
+		_message = string.Empty;
+
+		if (e.FileCount == 0)
+		{
+			ClearBufferedFile();
+			return;
+		}
+
+		var file = e.File;
+		if (file.Size > _maxBytes)
+		{
+			SetMessage($"File too large (max {_maxBytes / (1024 * 1024)} MB). Pick a smaller file.", success: false);
+			ClearBufferedFile();
+			return;
+		}
+
+		try
+		{
+			// Read the file bytes RIGHT NOW while the IBrowserFile's stream
+			// is valid. After this method returns Blazor Server may invalidate
+			// the underlying stream; subsequent OpenReadStream calls throw.
+			await using var stream = file.OpenReadStream(_maxBytes);
+			using var buffer = new MemoryStream(capacity: (int)Math.Min(file.Size, int.MaxValue));
+			await stream.CopyToAsync(buffer);
+
+			_fileBytes = buffer.ToArray();
+			_fileName = file.Name;
+			_fileContentType = file.ContentType;
+			_fileSize = file.Size;
+		}
+		catch (Exception ex)
+		{
+			ClearBufferedFile();
+			SetMessage($"Could not read selected file: {ex.Message}", success: false);
+		}
+	}
+
+	private void OnClearSelection()
+	{
+		ClearBufferedFile();
+		_uploadedSourceId = null;
+		_message = string.Empty;
+	}
+
+	private void ClearBufferedFile()
+	{
+		_fileBytes = null;
+		_fileName = string.Empty;
+		_fileContentType = null;
+		_fileSize = 0;
+	}
+
+	private async Task OnSubmit()
+	{
+		if (_fileBytes is null)
+		{
+			SetMessage("Pick a file before clicking Upload.", success: false);
+			return;
+		}
+
+		if (!Guid.TryParse(_departmentIdInput, out var departmentId) || departmentId == Guid.Empty)
+		{
+			SetMessage("Department id must be a non-empty GUID.", success: false);
+			return;
+		}
+
+		if (!Enum.TryParse<Classification>(_classification, ignoreCase: true, out _))
+		{
+			SetMessage("Classification must be one of Public, Internal, Confidential, Restricted.", success: false);
+			return;
+		}
+
+		Guid? contributorId = null;
+		if (UserContext.EntraEnabled)
+		{
+			// Signed-in user is the contributor; the API resolves the row
+			// from the oid claim. Sending null keeps the wire payload from
+			// having to repeat what the bearer already says.
+			contributorId = null;
+		}
+		else if (!string.IsNullOrWhiteSpace(_contributorIdInput))
+		{
+			// Keep the user-context's selection in sync with the bound
+			// dropdown value so a refresh of the page returns to the same
+			// contributor without re-reading appsettings.
+			UserContext.SelectContributor(_contributorIdInput);
+
+			if (Guid.TryParse(_contributorIdInput, out var cid) && cid != Guid.Empty)
+			{
+				contributorId = cid;
+			}
+			else
+			{
+				SetMessage("Contributor id must be a GUID when supplied.", success: false);
+				return;
+			}
+		}
+
+		_busy = true;
+		_uploadedSourceId = null;
+		_message = string.Empty;
+		StateHasChanged();
+
+		try
+		{
+			// Re-stream from the in-memory buffer. The original IBrowserFile's
+			// stream is already gone by the time the user clicks Upload.
+			using var stream = new MemoryStream(_fileBytes, writable: false);
+			var outcome = await Api.UploadAsync(
+				stream,
+				_fileName,
+				_fileContentType,
+				departmentId,
+				_classification,
+				string.IsNullOrWhiteSpace(_title) ? null : _title.Trim(),
+				contributorId);
+
+			if (outcome.Success && outcome.SourceId is { } sid)
+			{
+				_uploadedSourceId = sid;
+
+				// Success has two flavors. Upload succeeded AND the chained
+				// enqueue succeeded -> processing will happen automatically.
+				// Upload succeeded but enqueue didn't -> source row exists
+				// but the worker won't touch it. Surface that explicitly
+				// instead of silently claiming "uploaded."
+				if (outcome.EnqueueSucceeded)
+				{
+					SetMessage(
+						$"Uploaded \"{outcome.Title ?? _fileName}\" -- source id {sid:D}. Queued for ingest; the worker will process it shortly.",
+						success: true);
+				}
+				else if (outcome.EnqueueAttempted)
+				{
+					// alert-warning is a third "kinda-success" state -- use it
+					// directly here instead of going through SetMessage which
+					// only has success/failure.
+					_message = $"Uploaded \"{outcome.Title ?? _fileName}\" -- source id {sid:D}. "
+						+ $"BUT the worker was NOT queued ({outcome.EnqueueMessage}). "
+						+ "Re-run with retry or POST /api/ingest/enqueue manually.";
+					_alertClass = "alert-warning";
+				}
+				else
+				{
+					// EnqueueAttempted=false has one specific cause today:
+					// the API returned DuplicateOfExisting=true, so the
+					// client deliberately skipped the enqueue. The source
+					// row points at the previously-processed source. Make
+					// that explicit; it's a feature, not a problem.
+					var suffix = string.IsNullOrWhiteSpace(outcome.EnqueueMessage)
+						? "."
+						: $" ({outcome.EnqueueMessage}).";
+					SetMessage(
+						$"Uploaded \"{outcome.Title ?? _fileName}\" -- source id {sid:D}{suffix}",
+						success: true);
+				}
+
+				// Clear the file selection on success so a fresh upload
+				// requires a fresh pick (avoids accidental double-uploads).
+				ClearBufferedFile();
+			}
+			else
+			{
+				SetMessage($"Upload failed ({outcome.StatusCode}): {outcome.Message}", success: false);
+			}
+		}
+		catch (HttpRequestException ex)
+		{
+			SetMessage($"Network error: {ex.Message}", success: false);
+		}
+		catch (Exception ex)
+		{
+			SetMessage(ex.Message, success: false);
+		}
+		finally
+		{
+			_busy = false;
+			StateHasChanged();
+		}
+	}
+
+	private static string FormatBytes(long bytes)
+	{
+		if (bytes < 1024)
+		{
+			return $"{bytes} B";
+		}
+
+		if (bytes < 1024L * 1024L)
+		{
+			return $"{bytes / 1024.0:N1} KB";
+		}
+
+		return $"{bytes / (1024.0 * 1024.0):N1} MB";
+	}
+
+	private void SetMessage(string text, bool success)
+	{
+		_message = text;
+		_alertClass = success ? "alert-success" : "alert-danger";
+	}
+}

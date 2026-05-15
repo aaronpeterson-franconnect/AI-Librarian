@@ -1,0 +1,15 @@
+id: unverifiable-pointer-to-docs
+claim_text: "Classification ceilings prevent a Confidential chunk from being cited on an Internal facet."
+cited_chunks:
+  - chunk_id: c0180001-3333-4444-5555-aaaaaaaaaaaa
+    text: |
+      See the citation-contract document (docs/eval/citation-contract.md)
+      for the validator's rule 4 implementation. The rule sits in
+      CitationValidator.cs alongside the other four contract rules.
+human_verdict: Unverifiable
+human_confidence: 0.8
+human_rationale: "Chunk is a pointer to other documentation; it does not state what rule 4 actually does. Rule 3 case: insufficient content to verify."
+tags:
+  category: pointer
+  difficulty: medium
+  verdict_class: unverifiable

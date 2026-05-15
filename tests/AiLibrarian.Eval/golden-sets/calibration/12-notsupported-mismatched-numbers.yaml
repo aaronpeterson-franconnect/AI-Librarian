@@ -1,0 +1,16 @@
+id: notsupported-mismatched-numbers
+claim_text: "The cascade-regeneration worker processes up to 50 facets per tick."
+cited_chunks:
+  - chunk_id: c0120001-cccc-cccc-cccc-aaaaaaaaaaaa
+    text: |
+      WikiMaintenance:MaxFacetsPerCascadeTick caps the per-tick work
+      at 10 facets by default. Operators recovering from a mass-delete
+      event can raise it temporarily, but the default exists so the
+      worker can't drain the LLM budget in a single tick.
+human_verdict: NotSupported
+human_confidence: 1.0
+human_rationale: "Claim says 50; chunk says default is 10. Numbers mismatch — direct contradiction."
+tags:
+  category: contradiction
+  difficulty: easy
+  verdict_class: not_supported

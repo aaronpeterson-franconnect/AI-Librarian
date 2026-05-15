@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<!--
+		PDF skill plugin — ADR 0009. Canonicalizes PDFs into per-page
+		markdown chunks via UglyToad.PdfPig (MIT). Pure .NET; no external
+		services. Phase 1 ingest worker registers this alongside the
+		Markdown and Office skills.
+
+		Trade-off: PdfPig extracts text + positions but cannot OCR
+		scanned PDFs. Image-only PDFs canonicalize to empty chunks plus
+		a `pdf.no_text` issue so the operator sees why retrieval can't
+		find them. Phase 4 ships an OCR companion skill that the
+		registry routes to when this one returns no text.
+	-->
+
+	<ItemGroup>
+		<PackageReference Include="PdfPig" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\AiLibrarian.Domain\AiLibrarian.Domain.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<None Update="SKILL.md">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+	</ItemGroup>
+
+	<ItemGroup>
+		<InternalsVisibleTo Include="AiLibrarian.Skills.Pdf.Tests" />
+	</ItemGroup>
+
+</Project>

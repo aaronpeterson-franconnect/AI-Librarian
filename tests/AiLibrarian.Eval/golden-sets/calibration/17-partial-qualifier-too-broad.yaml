@@ -1,0 +1,16 @@
+id: partial-qualifier-too-broad
+claim_text: "All wiki proposals auto-expire after 14 days without review."
+cited_chunks:
+  - chunk_id: c0170001-2222-3333-4444-aaaaaaaaaaaa
+    text: |
+      Pending proposals expire 14 days after creation if no Reviewer
+      or Librarian acts on them. The expiry sweep transitions them to
+      state='expired' with reason='expired without review'. Accepted
+      and rejected proposals are terminal and not subject to expiry.
+human_verdict: Partial
+human_confidence: 0.8
+human_rationale: "Chunk supports 14-day expiry for pending proposals but the claim's 'all wiki proposals' is too broad — already-decided proposals never expire. Rule 4 broader-qualifier case."
+tags:
+  category: qualifier
+  difficulty: medium
+  verdict_class: partial

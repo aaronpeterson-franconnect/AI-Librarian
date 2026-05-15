@@ -1,0 +1,13 @@
+id: unverifiable-too-short
+claim_text: "The PostgresAuditWriter circuit breaker uses a Polly policy with a 30-second open-state hold and a half-open probe count of 3."
+cited_chunks:
+  - chunk_id: c0200001-5555-6666-7777-aaaaaaaaaaaa
+    text: |
+      Audit-writer breaker: Polly.
+human_verdict: Unverifiable
+human_confidence: 0.95
+human_rationale: "Chunk confirms the breaker is Polly-based but says nothing about the 30-second hold or the half-open probe count. Rule 3: cited content too thin to verify the specific values."
+tags:
+  category: too_short
+  difficulty: easy
+  verdict_class: unverifiable

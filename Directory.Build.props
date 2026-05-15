@@ -1,0 +1,50 @@
+<Project>
+
+	<!-- =====================================================================
+	     AI Librarian — Shared MSBuild properties for every .NET project
+	     in the solution. Keeps .csproj files thin and consistent.
+	     ===================================================================== -->
+
+	<PropertyGroup>
+		<TargetFramework>net9.0</TargetFramework>
+		<LangVersion>latest</LangVersion>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+		<WarningsAsErrors />
+		<WarningsNotAsErrors />
+		<EnableNETAnalyzers>true</EnableNETAnalyzers>
+		<AnalysisLevel>latest-recommended</AnalysisLevel>
+		<EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+		<!--
+			NoWarn rationale:
+			  CS1591: missing XML doc on every public symbol — too noisy for scaffolds.
+			  CA1848: LoggerMessage delegates — perf opinion, opt-in per hot path.
+			  CA2007: ConfigureAwait(false) — app/web code; Microsoft recommends not using.
+			  CA1062: argument null check on every public method — covered by NRT + analyzers.
+		-->
+		<NoWarn>$(NoWarn);CS1591;CA1848;CA2007;CA1062</NoWarn>
+		<DebugType>portable</DebugType>
+		<DebugSymbols>true</DebugSymbols>
+		<Deterministic>true</Deterministic>
+		<ContinuousIntegrationBuild Condition="'$(TF_BUILD)' == 'true' OR '$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+	</PropertyGroup>
+
+	<!-- Repository metadata; NuGet packing uses these if/when we publish. -->
+	<PropertyGroup>
+		<Company>AI Librarian</Company>
+		<Authors>AI Librarian Team</Authors>
+		<Copyright>Copyright (c) 2026</Copyright>
+		<Product>AI Librarian</Product>
+		<RepositoryType>git</RepositoryType>
+	</PropertyGroup>
+
+	<!-- Test projects: don't pack, allow internals access for testing. -->
+	<PropertyGroup Condition="$(MSBuildProjectName.EndsWith('.Tests'))">
+		<IsPackable>false</IsPackable>
+		<IsTestProject>true</IsTestProject>
+		<NoWarn>$(NoWarn);CA1707;CA2007</NoWarn> <!-- test method names; ConfigureAwait -->
+	</PropertyGroup>
+
+</Project>

@@ -1,0 +1,21 @@
+id: supported-ingest-service-bus-queue
+claim_text: "The ingest worker consumes messages from an Azure Service Bus queue."
+cited_chunks:
+  - chunk_id: c0040001-4444-4444-4444-aaaaaaaaaaaa
+    text: |
+      IngestWorker boot sequence:
+
+      1. Bind IngestQueueOptions from configuration.
+      2. Open a ServiceBusReceiver against the configured queue name.
+      3. Pump messages through the canonicalization pipeline.
+      4. Acknowledge on success; dead-letter on validation failure.
+
+      The default queue is `ingest-jobs`; override via
+      `IngestQueue:QueueName` in appsettings.
+human_verdict: Supported
+human_confidence: 0.95
+human_rationale: "Chunk describes opening a ServiceBusReceiver and pumping messages — directly supports the claim that the worker consumes from a Service Bus queue."
+tags:
+  category: factual
+  area: ingest
+  verdict_class: supported

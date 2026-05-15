@@ -1,0 +1,19 @@
+id: partial-feature-exists-different-role
+claim_text: "Reviewers and Librarians can both accept and reject proposed wiki revisions."
+cited_chunks:
+  - chunk_id: c0150001-ffff-ffff-ffff-aaaaaaaaaaaa
+    text: |
+      Proposed-revision decision endpoints (accept / reject) are
+      authorized via the standard role gate: a caller must be Admin or
+      hold the Reviewer or Librarian role on the page's department.
+      RLS further filters which proposals are visible to the caller.
+      Routine maintenance proposals from system-actors-only flows are
+      not surfaced to Reviewers; they reach the queue as Librarian-
+      only.
+human_verdict: Partial
+human_confidence: 0.75
+human_rationale: "Chunk supports Librarian access but qualifies Reviewer access — some proposals are Librarian-only. Half the claim holds; the broad 'both can decide all proposals' framing does not."
+tags:
+  category: compound
+  difficulty: hard
+  verdict_class: partial

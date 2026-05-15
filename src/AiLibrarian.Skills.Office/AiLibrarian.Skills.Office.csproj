@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<!--
+		Office skill plugin — ADR 0009. Canonicalizes DOCX, XLSX, and
+		PPTX into markdown chunks. Pure .NET via the OpenXML SDK; no
+		external services. Phase 1+ ingest worker registers these
+		alongside the Markdown skill.
+	-->
+
+	<ItemGroup>
+		<PackageReference Include="DocumentFormat.OpenXml" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\AiLibrarian.Domain\AiLibrarian.Domain.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<None Update="SKILL.md">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+	</ItemGroup>
+
+</Project>

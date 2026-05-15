@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<!--
+		Security — AskGuard + ChunkEnvelope + SecretRedactor + RateLimiter.
+		Per ADR 0017. Lives in its own classlib so the synthesis-time
+		defense layer is reusable from any host (the Api's /api/ask
+		route, the future MCP-co-hosted variant, batch tooling, the
+		eval harness's adversarial corpus runner).
+	-->
+
+	<ItemGroup>
+		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+		<PackageReference Include="Microsoft.Extensions.Options" />
+	</ItemGroup>
+
+</Project>

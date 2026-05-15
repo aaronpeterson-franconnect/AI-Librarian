@@ -1,0 +1,22 @@
+id: supported-pgvector-hnsw-index
+claim_text: "The source_chunks.embedding column uses an HNSW index from pgvector."
+cited_chunks:
+  - chunk_id: c0060001-6666-6666-6666-aaaaaaaaaaaa
+    text: |
+      Migration 0015 adds the embedding column and the supporting HNSW
+      index:
+
+          CREATE INDEX ix_source_chunks_embedding_hnsw
+              ON source_chunks
+              USING hnsw (embedding vector_cosine_ops)
+              WITH (m = 16, ef_construction = 64);
+
+      HNSW gives sub-linear ANN lookup at the cost of an in-memory
+      graph; sized for ~5M chunks in pilot.
+human_verdict: Supported
+human_confidence: 1.0
+human_rationale: "Chunk shows the literal CREATE INDEX ... USING hnsw statement on source_chunks.embedding."
+tags:
+  category: factual
+  area: schema
+  verdict_class: supported

@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<!--
+		Markdown skill plugin — ADR 0009. Referenced by ingestion worker (Phase 1+).
+	-->
+
+	<ItemGroup>
+		<ProjectReference Include="..\AiLibrarian.Domain\AiLibrarian.Domain.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<None Update="SKILL.md">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+	</ItemGroup>
+
+</Project>

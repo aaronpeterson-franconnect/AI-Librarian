@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+	<!--
+		Api — ASP.NET Core minimal API host.
+		Phase 0: health endpoint + Entra auth + RLS session-variable
+		pushdown demonstration. Future phases add ingestion, query,
+		approval-queue, and reviewer endpoints.
+	-->
+
+	<ItemGroup>
+		<PackageReference Include="Azure.Storage.Blobs" />
+		<PackageReference Include="Azure.Messaging.ServiceBus" />
+		<PackageReference Include="Microsoft.Identity.Web" />
+		<PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+		<PackageReference Include="Microsoft.ApplicationInsights.AspNetCore" />
+		<PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+		<PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
+		<PackageReference Include="OpenTelemetry.Instrumentation.Http" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\AiLibrarian.Domain\AiLibrarian.Domain.csproj" />
+		<ProjectReference Include="..\AiLibrarian.Auditing\AiLibrarian.Auditing.csproj" />
+		<ProjectReference Include="..\AiLibrarian.Infrastructure\AiLibrarian.Infrastructure.csproj" />
+		<ProjectReference Include="..\AiLibrarian.LlmGateway\AiLibrarian.LlmGateway.csproj" />
+		<ProjectReference Include="..\AiLibrarian.Quality\AiLibrarian.Quality.csproj" />
+		<ProjectReference Include="..\AiLibrarian.Security\AiLibrarian.Security.csproj" />
+		<ProjectReference Include="..\AiLibrarian.WikiMaintainer\AiLibrarian.WikiMaintainer.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<InternalsVisibleTo Include="AiLibrarian.Api.Tests" />
+	</ItemGroup>
+
+</Project>

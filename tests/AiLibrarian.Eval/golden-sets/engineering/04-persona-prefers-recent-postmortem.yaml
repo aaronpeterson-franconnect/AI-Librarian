@@ -1,0 +1,20 @@
+id: persona-prefers-recent-postmortem
+query: What did we change after the last Service Bus throughput incident?
+persona: engineering
+classification_scope: Internal
+# Two post-mortems address Service Bus throughput incidents: one from
+# 2024-11 and one from 2026-04. Under neutral retrieval both rank
+# closely because vocabulary + topic overlap. Engineering persona's
+# recencyHalfLifeDays=90 should heavily favor the recent post-mortem.
+expected_chunk_ids:
+  - 40000001-1111-1111-1111-aaaaaaaaaaaa
+expected_citations:
+  - source_id: 40000001-2222-2222-2222-aaaaaaaaaaaa
+    span_anchor: '{"type":"markdown","paragraphIndex":1}'
+    min_confidence: 0.75
+must_refuse: false
+tags:
+  category: persona_delta
+  area: post_mortem
+  dimension: recency_decay
+  expected_lift: "newer-over-older"

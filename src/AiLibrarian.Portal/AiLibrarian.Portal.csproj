@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+	<!--
+		Phase 1 portal — Blazor Server. UI surface for the Engineering
+		pilot: upload sources, browse the corpus, inspect details. All
+		state lives behind the Librarian API; the portal is a thin
+		typed-HTTP-client client.
+
+		Directory.Build.props sets TargetFramework, Nullable, and
+		TreatWarningsAsErrors at the repo level — we only declare the
+		things that differ here.
+	-->
+
+	<ItemGroup>
+		<PackageReference Include="Microsoft.Identity.Web" />
+		<PackageReference Include="Microsoft.Identity.Web.UI" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\AiLibrarian.Domain\AiLibrarian.Domain.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<InternalsVisibleTo Include="AiLibrarian.Portal.Tests" />
+	</ItemGroup>
+
+</Project>

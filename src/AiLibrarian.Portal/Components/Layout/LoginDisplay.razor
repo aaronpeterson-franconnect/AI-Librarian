@@ -1,0 +1,33 @@
+@using AiLibrarian.Portal.Services
+@inject IPortalUserContext UserContext
+
+@if (UserContext.EntraEnabled)
+{
+	<AuthorizeView>
+		<Authorized>
+			<span class="navbar-text me-2">@context.User.Identity?.Name</span>
+			<a class="nav-link d-inline-block" href="MicrosoftIdentity/Account/SignOut">Sign out</a>
+		</Authorized>
+		<NotAuthorized>
+			<a class="nav-link" href="MicrosoftIdentity/Account/SignIn">Sign in</a>
+		</NotAuthorized>
+	</AuthorizeView>
+}
+else
+{
+	@* Dev-mode: surface the currently-selected DevContributor so the operator
+	   can see who their uploads will be attributed to without opening the
+	   upload form. *@
+	@if (!string.IsNullOrEmpty(UserContext.DisplayName))
+	{
+		<span class="navbar-text small text-muted">
+			dev: @UserContext.DisplayName
+		</span>
+	}
+	else
+	{
+		<span class="navbar-text small text-warning">
+			no contributor selected
+		</span>
+	}
+}

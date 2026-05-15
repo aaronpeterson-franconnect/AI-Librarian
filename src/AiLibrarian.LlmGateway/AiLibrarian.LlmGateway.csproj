@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<!-- Semantic Kernel Azure OpenAI connectors mark several APIs experimental (SKEXP*). -->
+		<NoWarn>$(NoWarn);SKEXP0001;SKEXP0010</NoWarn>
+	</PropertyGroup>
+
+	<!--
+		LlmGateway — Microsoft Semantic Kernel implementation of the
+		gateway abstractions, with Azure OpenAI wired up and other
+		providers wired-but-disabled. Per-call telemetry to the audit
+		ledger. ADR 0003 + ADR 0012.
+	-->
+
+	<ItemGroup>
+		<PackageReference Include="Microsoft.SemanticKernel" />
+		<PackageReference Include="Microsoft.SemanticKernel.Connectors.AzureOpenAI" />
+		<PackageReference Include="Microsoft.SemanticKernel.Connectors.OpenAI" />
+		<PackageReference Include="Microsoft.Extensions.Logging" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+		<PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
+		<PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+		<PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+		<PackageReference Include="Azure.Identity" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\AiLibrarian.Domain\AiLibrarian.Domain.csproj" />
+		<ProjectReference Include="..\AiLibrarian.Auditing\AiLibrarian.Auditing.csproj" />
+		<ProjectReference Include="..\AiLibrarian.LlmGateway.Abstractions\AiLibrarian.LlmGateway.Abstractions.csproj" />
+	</ItemGroup>
+
+</Project>

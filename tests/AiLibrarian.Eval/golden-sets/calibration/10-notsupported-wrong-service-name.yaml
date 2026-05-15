@@ -1,0 +1,17 @@
+id: notsupported-wrong-service-name
+claim_text: "Audit telemetry flows through the AuditDispatcher service via gRPC."
+cited_chunks:
+  - chunk_id: c0100001-aaaa-aaaa-aaaa-aaaaaaaaaaaa
+    text: |
+      IAuditWriter writes events directly to the audit_events table in
+      Postgres. There is no intermediate dispatcher service. The
+      circuit breaker (Polly) sits in-process; if the breaker opens
+      and Auditing:DegradedModeAllowed is false, the calling request
+      fails closed.
+human_verdict: NotSupported
+human_confidence: 1.0
+human_rationale: "Chunk contradicts the claim — there is no AuditDispatcher and no gRPC; the writer goes straight to Postgres."
+tags:
+  category: contradiction
+  difficulty: medium
+  verdict_class: not_supported

@@ -1,0 +1,142 @@
+name: Quality Gate
+
+# Required PR check that aggregates the pre-Phase-1 hardening plan's
+# acceptance bars into a single workflow. Each step maps to one
+# hardening item; a failure on any step blocks the PR.
+#
+# Gates (mapped to plan item numbers):
+#   Item #1 — eval thresholds:  EvalRunnerTests, RetrievalMetricsTests, SynthesisMetricsTests
+#   Item #2 — RLS battery:       AiLibrarian.Infrastructure.Tests with testcontainer Postgres
+#   Item #3 — audit writer:      Auditing/* tests + FailClosedEndpointTests
+#   Item #4 — citation contract: AiLibrarian.Quality.Tests
+#   Item #5 — AskGuard:           AiLibrarian.Mcp.Tests Security/* suite incl. adversarial corpus
+#
+# Each step prints a clearly-attributable header so a CI failure points
+# at the matching hardening item without parsing trx files.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  quality-gate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      # The RLS battery boots a real Postgres+pgvector container via
+      # testcontainers-dotnet. Pre-pull so failures attribute to the
+      # image-pull step instead of looking like a mid-test crash.
+      - name: Pre-pull testcontainer Postgres image
+        run: docker pull pgvector/pgvector:pg16
+
+      - name: Restore + Build (Release)
+        run: |
+          dotnet restore AiLibrarian.sln
+          dotnet build AiLibrarian.sln --no-restore -c Release
+
+      # =====================================================================
+      # Gate 1 — Eval harness thresholds (hardening plan item #1)
+      # =====================================================================
+      - name: 'Gate #1 — Eval thresholds'
+        run: |
+          echo '::group::Eval harness — recall@10, MRR, nDCG, citation coverage, refusal rate'
+          dotnet test tests/AiLibrarian.Eval/AiLibrarian.Eval.csproj \
+            --no-build -c Release \
+            --logger "trx;LogFileName=eval.trx" \
+            --logger "console;verbosity=normal"
+          echo '::endgroup::'
+
+      # =====================================================================
+      # Gate 2 — RLS chaos battery (hardening plan item #2)
+      # =====================================================================
+      - name: 'Gate #2 — RLS chaos battery'
+        run: |
+          echo '::group::RLS battery — identity x source matrix + fuzz'
+          dotnet test tests/AiLibrarian.Infrastructure.Tests/AiLibrarian.Infrastructure.Tests.csproj \
+            --no-build -c Release \
+            --filter "FullyQualifiedName~Rls" \
+            --logger "trx;LogFileName=rls.trx" \
+            --logger "console;verbosity=normal"
+          echo '::endgroup::'
+
+      # =====================================================================
+      # Gate 3 — Audit writer fail-closed (hardening plan item #3)
+      # =====================================================================
+      - name: 'Gate #3 — Audit writer fail-closed'
+        run: |
+          echo '::group::Audit writer — Postgres writer + circuit breaker + startup probe'
+          dotnet test tests/AiLibrarian.Infrastructure.Tests/AiLibrarian.Infrastructure.Tests.csproj \
+            --no-build -c Release \
+            --filter "FullyQualifiedName~Auditing" \
+            --logger "trx;LogFileName=audit-infra.trx" \
+            --logger "console;verbosity=normal"
+          dotnet test tests/AiLibrarian.Api.Tests/AiLibrarian.Api.Tests.csproj \
+            --no-build -c Release \
+            --filter "FullyQualifiedName~Auditing|FullyQualifiedName~FailClosed" \
+            --logger "trx;LogFileName=audit-api.trx" \
+            --logger "console;verbosity=normal"
+          echo '::endgroup::'
+
+      # =====================================================================
+      # Gate 4 — Citation contract (hardening plan item #4)
+      # =====================================================================
+      - name: 'Gate #4 — Citation contract'
+        run: |
+          echo '::group::Citation contract — validator (5 rules) + grader parser + dangling detector'
+          dotnet test tests/AiLibrarian.Quality.Tests/AiLibrarian.Quality.Tests.csproj \
+            --no-build -c Release \
+            --logger "trx;LogFileName=quality.trx" \
+            --logger "console;verbosity=normal"
+          echo '::endgroup::'
+
+      # =====================================================================
+      # Gate 5 — AskGuard + adversarial corpus (hardening plan item #5)
+      # =====================================================================
+      - name: 'Gate #5 — AskGuard + adversarial corpus'
+        run: |
+          echo '::group::AskGuard — 6 controls + 50 jailbreaks + 50 poisoned chunks + 33 secret samples'
+          dotnet test tests/AiLibrarian.Mcp.Tests/AiLibrarian.Mcp.Tests.csproj \
+            --no-build -c Release \
+            --filter "FullyQualifiedName~Security" \
+            --logger "trx;LogFileName=askguard.trx" \
+            --logger "console;verbosity=normal"
+          echo '::endgroup::'
+
+      # =====================================================================
+      # Result artifacts — every trx for forensic drill-in
+      # =====================================================================
+      - name: Upload quality-gate trx
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-gate-results
+          path: "**/*.trx"
+
+      # =====================================================================
+      # Markdown summary — appears in PR check details
+      # =====================================================================
+      - name: Quality-gate summary
+        if: always()
+        run: |
+          {
+            echo "# Quality Gate"
+            echo ""
+            echo "| Gate | Plan item | Status |"
+            echo "|------|-----------|--------|"
+            echo "| Eval thresholds        | #1 | ${{ job.status }} |"
+            echo "| RLS chaos battery      | #2 | ${{ job.status }} |"
+            echo "| Audit writer           | #3 | ${{ job.status }} |"
+            echo "| Citation contract      | #4 | ${{ job.status }} |"
+            echo "| AskGuard + adversarial | #5 | ${{ job.status }} |"
+            echo ""
+            echo "_Per-gate trx artifacts attached to this run._"
+          } >> "$GITHUB_STEP_SUMMARY"

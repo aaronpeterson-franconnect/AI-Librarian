@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<!--
+		Infrastructure — Postgres adapters, RLS session-variable
+		pushdown helper (per ADR 0005), audit-writer persistence.
+	-->
+
+	<ItemGroup>
+		<PackageReference Include="Pgvector" />
+		<PackageReference Include="Npgsql" />
+		<PackageReference Include="Npgsql.OpenTelemetry" />
+		<PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+		<PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
+		<PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\AiLibrarian.Domain\AiLibrarian.Domain.csproj" />
+		<ProjectReference Include="..\AiLibrarian.Auditing\AiLibrarian.Auditing.csproj" />
+	</ItemGroup>
+
+</Project>

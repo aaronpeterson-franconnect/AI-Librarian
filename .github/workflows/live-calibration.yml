@@ -1,0 +1,126 @@
+name: Live calibration (LLM-judge κ)
+
+# Runs the 20 calibration cases against a real Azure OpenAI chat
+# deployment, computes Cohen's κ between human gold labels and the
+# LLM judge's verdicts, and applies the rubric's threshold band as a
+# warn / fail signal.
+#
+# Why a separate workflow (vs. inlining into quality-gate.yml):
+#   - Real LLM calls cost tokens; PR runs shouldn't bill on every push.
+#   - Azure OpenAI secrets aren't available in fork PRs (GitHub's
+#     security model). A separate workflow keeps the gate from being
+#     a flaky red on community PRs.
+#   - The schedule trigger gives the operator a daily κ trend without
+#     manual action; workflow_dispatch lets them re-run on demand.
+#
+# Required secrets:
+#   AZURE_OPENAI_ENDPOINT       e.g. https://my-azure-openai.openai.azure.com
+#   AZURE_OPENAI_API_KEY        the key (managed-identity not supported by the shim)
+#   AZURE_OPENAI_CHAT_DEPLOYMENT  deployment name (NOT the model id)
+# Optional secrets:
+#   AZURE_OPENAI_API_VERSION    overrides the default "2024-08-01-preview"
+#
+# Gate semantics (per docs/eval/calibration-rubric.md):
+#   κ >= 0.7   Substantial / NearPerfect — pass (green)
+#   0.4 <= κ < 0.7   Moderate — warn (yellow, doesn't fail the job)
+#   κ < 0.4   Poor — fail (red)
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 09:00 UTC daily — runs after typical end-of-day pushes settle.
+    - cron: "0 9 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  calibration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Restore + Build (Release)
+        run: |
+          dotnet restore tests/AiLibrarian.Eval/AiLibrarian.Eval.csproj
+          dotnet build tests/AiLibrarian.Eval/AiLibrarian.Eval.csproj --no-restore -c Release
+
+      - name: Run live calibration
+        env:
+          AILIB_LIVE_CALIBRATION: "1"
+          AILIB_CALIBRATION_REPORT_DIR: ${{ github.workspace }}/calibration-out
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+          AZURE_OPENAI_CHAT_DEPLOYMENT: ${{ secrets.AZURE_OPENAI_CHAT_DEPLOYMENT }}
+          AZURE_OPENAI_API_VERSION: ${{ secrets.AZURE_OPENAI_API_VERSION }}
+        run: |
+          mkdir -p calibration-out
+          dotnet test tests/AiLibrarian.Eval/AiLibrarian.Eval.csproj \
+            --no-build -c Release \
+            --filter "FullyQualifiedName~LiveCalibration" \
+            --logger "console;verbosity=normal"
+
+      - name: Apply κ threshold gate
+        if: always()
+        run: |
+          set -euo pipefail
+          REPORT=calibration-out/calibration-report.json
+          if [ ! -f "$REPORT" ]; then
+            echo "::warning::No calibration report at $REPORT — live calibration likely skipped (check AILIB_LIVE_CALIBRATION + Azure OpenAI secrets)."
+            exit 0
+          fi
+
+          KAPPA=$(jq -r '.cohenKappa' "$REPORT")
+          BAND=$(jq -r '.band' "$REPORT")
+          AGREEMENT=$(jq -r '.observedAgreement' "$REPORT")
+          TOTAL=$(jq -r '.totalCases' "$REPORT")
+
+          echo "Live calibration result: cases=$TOTAL agreement=$AGREEMENT kappa=$KAPPA band=$BAND"
+
+          {
+            echo "# Live calibration"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|---|---|"
+            echo "| Cases | $TOTAL |"
+            echo "| Observed agreement | $AGREEMENT |"
+            echo "| Cohen's κ | $KAPPA |"
+            echo "| Band | $BAND |"
+            echo ""
+            echo "Confusion matrix (human verdict → judge verdict):"
+            echo ""
+            echo "| Human | Judge | Count |"
+            echo "|---|---|---|"
+            jq -r '.confusion[] | "| \(.humanVerdict) | \(.judgeVerdict) | \(.count) |"' "$REPORT"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          case "$BAND" in
+            NearPerfect|Substantial)
+              echo "::notice::κ=$KAPPA in band $BAND — pass"
+              ;;
+            Moderate)
+              echo "::warning::κ=$KAPPA in band $BAND — judge-vs-human agreement is below the 0.7 substantial threshold. Investigate the confusion matrix in this run's summary; see docs/eval/calibration-rubric.md §\"When the gate trips\"."
+              ;;
+            Poor|Unknown)
+              echo "::error::κ=$KAPPA in band $BAND — judge-vs-human agreement is below 0.4. The judge prompt or the calibration set needs work before this gate is meaningful."
+              exit 1
+              ;;
+            *)
+              echo "::warning::Unrecognised band '$BAND' in calibration report."
+              ;;
+          esac
+
+      - name: Upload calibration report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: calibration-report
+          path: calibration-out/calibration-report.json
+          if-no-files-found: ignore

@@ -1,0 +1,17 @@
+id: supported-hybrid-vector-weight-default
+claim_text: "Hybrid search defaults the vector weight to 0.6, with the remaining 0.4 going to text rank."
+cited_chunks:
+  - chunk_id: c0050001-5555-5555-5555-aaaaaaaaaaaa
+    text: |
+      Hybrid retrieval combines pgvector cosine similarity with a
+      tsvector-based text rank. The Search:HybridVectorWeight
+      configuration value (default 0.6) is the weight applied to the
+      vector branch; the text rank is weighted by (1 - this). Tuning
+      vector higher favors semantic matches over keyword matches.
+human_verdict: Supported
+human_confidence: 1.0
+human_rationale: "Chunk explicitly states the 0.6 default and the (1 - this) complement to text rank."
+tags:
+  category: factual
+  area: search
+  verdict_class: supported

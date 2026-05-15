@@ -1,0 +1,16 @@
+id: partial-half-supported-half-off-topic
+claim_text: "Hybrid search uses pgvector for the vector branch and Lucene for text rank."
+cited_chunks:
+  - chunk_id: c0160001-1111-2222-3333-aaaaaaaaaaaa
+    text: |
+      Vector retrieval uses pgvector cosine similarity. Text rank uses
+      Postgres's built-in tsvector / ts_rank_cd functions — there is no
+      external Lucene dependency. The two scores are linearly combined
+      with the configured weight.
+human_verdict: Partial
+human_confidence: 0.9
+human_rationale: "Pgvector half is supported; Lucene half is contradicted (chunk explicitly says no external Lucene). Compound claim with one half wrong."
+tags:
+  category: compound
+  difficulty: medium
+  verdict_class: partial

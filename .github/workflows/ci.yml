@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      # Pre-pull the pgvector image so testcontainers doesn't pay the
+      # download cost mid-test (and so an image-pull failure surfaces
+      # as a separate, clearly-attributable step). RLS battery in
+      # AiLibrarian.Infrastructure.Tests boots this image via
+      # testcontainers; the runner's preinstalled Docker daemon does
+      # the rest.
+      - name: Pre-pull testcontainer Postgres image
+        run: docker pull pgvector/pgvector:pg16
+
+      - name: Restore
+        run: dotnet restore AiLibrarian.sln
+
+      - name: Build
+        run: dotnet build AiLibrarian.sln --no-restore -c Release
+
+      - name: Test
+        run: dotnet test AiLibrarian.sln --no-build -c Release --logger "trx;LogFileName=test-results.trx"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: "**/test-results.trx"
+
+  bicep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bicep compile
+        run: |
+          az bicep install
+          az bicep build --file deploy/bicep/main.bicep
+          az bicep build --file deploy/bicep/main-pilot.bicep

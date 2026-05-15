@@ -1,0 +1,48 @@
+@page "/"
+
+<PageTitle>AI Librarian</PageTitle>
+
+<h1>AI Librarian portal</h1>
+
+<p class="lead">
+	Phase 1 portal for the Engineering pilot. Upload sources, browse what
+	landed, and follow ingest progress through the audit ledger.
+</p>
+
+<div class="row g-3 mt-2">
+	<div class="col-md-6">
+		<div class="card h-100">
+			<div class="card-body">
+				<h5 class="card-title">Upload a source</h5>
+				<p class="card-text">
+					Push a file to <code>POST /api/portal/sources/upload</code>.
+					The API stores the bytes in Blob storage, creates a
+					<code>sources</code> row, and returns the new id so you
+					can hand it to the ingest worker.
+				</p>
+				<a class="btn btn-primary" href="/upload">Open upload</a>
+			</div>
+		</div>
+	</div>
+	<div class="col-md-6">
+		<div class="card h-100">
+			<div class="card-body">
+				<h5 class="card-title">Browse sources</h5>
+				<p class="card-text">
+					See every source visible to your RLS context — ordered by
+					most recently created. Drill in to inspect the full row,
+					including the SHA-256 the worker stamped after
+					canonicalization.
+				</p>
+				<a class="btn btn-primary" href="/sources">Browse sources</a>
+			</div>
+		</div>
+	</div>
+</div>
+
+<p class="text-muted mt-4">
+	After uploading, queue ingest separately via
+	<code>POST /api/ingest/enqueue</code> or MCP <code>enqueue_source</code>.
+	The worker writes audit rows tagged <code>ingest/canonicalized</code>
+	and <code>ingest/embedded</code> as it processes the source.
+</p>

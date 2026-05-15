@@ -1,0 +1,21 @@
+id: supported-user-directory-scoped
+claim_text: "PostgresUserDirectory is registered as a scoped DI service so its per-request cache doesn't bleed between callers."
+cited_chunks:
+  - chunk_id: c0070001-7777-7777-7777-aaaaaaaaaaaa
+    text: |
+      The IUserDirectory holds a small projection cache to avoid
+      re-querying user_authorizations within a single request. That
+      cache MUST NOT outlive the request: two concurrent requests for
+      different users would otherwise share state. Hence the
+      registration:
+
+          services.AddScoped<IUserDirectory, PostgresUserDirectory>();
+
+      Singleton would be incorrect.
+human_verdict: Supported
+human_confidence: 1.0
+human_rationale: "Chunk shows AddScoped registration plus the rationale matching the claim."
+tags:
+  category: factual
+  area: di
+  verdict_class: supported
