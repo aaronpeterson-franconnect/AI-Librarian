@@ -1,0 +1,89 @@
+name: Live Smoke
+
+# Brings up the docker-compose dev stack on the CI runner, exercises
+# the live API against real Postgres + migrations + audit-writer, then
+# tears down. Catches integration-level regressions the unit + RLS
+# battery can't see:
+#   - migrations don't apply against a fresh Postgres
+#   - API can't start with its real config (audit probe wiring)
+#   - route + RLS regressions on Postgres-only endpoints
+#   - /api/search/hybrid silently degrades to 200 when LLM isn't
+#     configured (would mask the LlmGateway-not-enabled diagnostic)
+#
+# Does NOT yet exercise retrieval or synthesis end-to-end -- those
+# need either LLM secrets (Azure OpenAI) or a deterministic embedding
+# mock service in compose. Both are tracked as Phase 2B follow-ups.
+#
+# The asserter is scripts/live-smoke.sh -- same script developers run
+# locally against `docker compose up`. Keeping a single source of truth
+# means a CI failure is always reproducible locally without translating
+# yaml to bash.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  live-smoke:
+    runs-on: ubuntu-latest
+    # Whole job has a generous ceiling -- the compose build is the long
+    # pole (~3-5 min cold). If we ever exceed this it almost certainly
+    # means the api never became ready and the script is stuck in its
+    # 90s wait loop; the timeout-minutes trim that tail.
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # docker-buildx is preinstalled on ubuntu-latest, but the default
+      # builder caches less aggressively than the buildx-action one. The
+      # cache-from/cache-to lines on later jobs would attach to this
+      # builder; we don't use them yet (api+portal builds are fast
+      # enough cold) but pinning it here keeps the option open.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Pre-pull base images
+        # Pull pgvector + liquibase upfront so a slow Docker Hub doesn't
+        # masquerade as an "api never became ready" failure later.
+        run: |
+          docker pull pgvector/pgvector:pg16 &
+          docker pull liquibase/liquibase:4.29 &
+          wait
+
+      - name: Build + start compose (postgres, migrations, api)
+        # Portal is intentionally NOT started -- the smoke script only
+        # hits /api/*. Saves ~30s of build time per PR and keeps the
+        # failure surface focused on the API path.
+        run: |
+          docker compose up -d --build postgres migrations api
+          docker compose ps -a
+
+      - name: Run smoke
+        # The script handles its own readiness wait + assertions.
+        run: bash scripts/live-smoke.sh
+
+      - name: Dump api logs on failure
+        # `if: failure()` only fires if a previous step failed; runs
+        # before the cleanup so the artifact reflects the failed state.
+        if: failure()
+        run: |
+          echo '##[group]ailib-postgres logs'
+          docker compose logs postgres
+          echo '##[endgroup]'
+          echo '##[group]ailib-migrations logs'
+          docker compose logs migrations
+          echo '##[endgroup]'
+          echo '##[group]ailib-api logs'
+          docker compose logs api
+          echo '##[endgroup]'
+
+      - name: Tear down
+        # `if: always()` ensures cleanup runs even after a failed smoke;
+        # otherwise the runner's docker daemon would leak the volumes
+        # between consecutive matrix runs (we don't matrix today, but
+        # the habit costs nothing).
+        if: always()
+        run: docker compose down -v

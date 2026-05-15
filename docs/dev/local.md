@@ -25,6 +25,18 @@ will render but show empty pages because the database has no seed data.
 
 ## Smoke-test recipe
 
+Use the automated script — same one CI runs (`scripts/live-smoke.sh`):
+
+```bash
+docker compose up -d postgres migrations api
+bash scripts/live-smoke.sh
+```
+
+If CI's Live Smoke job fails, you can reproduce locally with these two
+commands without translating yaml to bash.
+
+For manual probing, the steps the script automates are:
+
 ```bash
 # 1. Verify the API is up. Should return JSON with auditStatus.CircuitState=Closed.
 curl http://localhost:5071/health
@@ -107,6 +119,32 @@ docker compose logs migrations # full Liquibase output, useful when migrations f
 docker compose logs postgres   # Postgres logs (pg_isready healthcheck failures show here)
 docker exec -it ailib-postgres psql -U ailibrarian -d ailibrarian
 ```
+
+## Phase 2B — deterministic LLM mock for full retrieval smoke
+
+The current Live Smoke workflow exercises Postgres-only endpoints
+(`/health`, `/api/departments`, `/api/audit/recent`) plus the
+documented 503 contract for `/api/search/hybrid` when no LLM is
+configured. It does NOT catch regressions inside the retrieval or
+synthesis pipeline because those need an embedding/chat provider.
+
+Two options to add real-retrieval coverage:
+
+1. **GitHub secrets + Azure OpenAI** — schedule a nightly workflow
+   that pulls keys from `${{ secrets.AZURE_OPENAI_* }}` and wires
+   them through `env_file:` into the compose api service. Burns
+   real tokens (~$0.50/run for the 5-case corpus) and only runs on
+   trusted contexts (won't fire on forked-PR runs).
+2. **Deterministic embedding mock** — a tiny service in compose
+   that responds to `POST /openai/deployments/*/embeddings` with a
+   hash-seeded float vector. The API can't tell it's not Azure
+   OpenAI; pgvector cosine-similarity stays meaningful because the
+   same input produces the same vector. Zero LLM cost, runs on
+   every PR including forks.
+
+Recommend (2) for the every-PR signal and (1) as a nightly tripwire
+that confirms the real provider hasn't drifted. Tracked as Phase 2B
+of the docker-compose dev-stack work.
 
 ## Known limitations (Phase A)
 
