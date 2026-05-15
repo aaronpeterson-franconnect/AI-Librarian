@@ -28,8 +28,8 @@
 	<include file="0015-source-chunks-embedding.sql" relativeToChangelogFile="true"/>
 	<include file="0016-source-chunks-search-document.sql" relativeToChangelogFile="true"/>
 
-	<!-- Phase 2 wiki schema (ADR 0006, ADR 0007). LLM-authored only -- no
-	     human-direct writes today; the Wiki Maintainer skill plugin lands
+	<!-- Phase 2 wiki schema (ADR 0006, ADR 0007). LLM-authored only; no
+	     human-direct writes today. The Wiki Maintainer skill plugin lands
 	     in a follow-up slice. The schema arrives first so existing wiki
 	     consumers (LlmClaimGrader sink, dangling-citation detector) have
 	     somewhere to persist. -->
