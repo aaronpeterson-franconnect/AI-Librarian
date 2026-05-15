@@ -15,7 +15,12 @@ RUN dotnet publish src/AiLibrarian.IngestWorker/AiLibrarian.IngestWorker.csproj 
 
 FROM mcr.microsoft.com/dotnet/runtime:9.0 AS final
 WORKDIR /app
-RUN groupadd --system app && useradd --system --gid app app
+# mcr.microsoft.com/dotnet/runtime:9.0 ships with a non-root `app`
+# user pre-created (Microsoft hardening change, late 2024). The
+# getent guards keep the line idempotent across base-image revisions
+# without failing when the user/group already exists.
+RUN getent group app || groupadd --system app \
+	&& getent passwd app || useradd --system --gid app app
 COPY --from=build /app/publish .
 USER app
 ENTRYPOINT ["dotnet", "AiLibrarian.IngestWorker.dll"]

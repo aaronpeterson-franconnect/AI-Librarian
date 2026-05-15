@@ -76,6 +76,13 @@ public sealed class RlsPostgresFixture : IAsyncLifetime
 				$"RLS Postgres fixture unavailable: {ex.GetType().Name}: {ex.Message}. "
 				+ "These tests require Docker (testcontainers); they're skipped on machines without it. "
 				+ "CI runners on `ubuntu-latest` have Docker preinstalled.";
+			// Surface the underlying exception so CI logs explain WHY the
+			// fixture failed. Without this, a Linux runner that should
+			// support testcontainers silently skips every dependent test
+			// (production-quality regression detection ends up depending
+			// on this print landing in the runner's stdout).
+			Console.Error.WriteLine($"[RlsPostgresFixture] {UnavailableReason}");
+			Console.Error.WriteLine(ex.ToString());
 		}
 	}
 
