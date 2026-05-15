@@ -1,0 +1,150 @@
+# Local dev stack — bring up Postgres + Liquibase migrations + API + Portal
+# with one command:
+#
+#   docker compose up --build
+#
+# What works on this stack:
+#   - Postgres-backed endpoints: /health, /api/departments, /api/sources/*,
+#     /api/audit (when configured), persona reads
+#   - Portal pages that browse departments + sources
+#   - Postgres + RLS exercised end-to-end (same migrations as production)
+#
+# What does NOT work without further config (intentionally deferred):
+#   - LLM-backed endpoints (/api/search/hybrid, /api/ask, /api/portal/sources/upload
+#     pipeline) — return 503 until Azure OpenAI keys are wired into the api
+#     service environment. See LlmGateway:Providers:azure-openai block in
+#     src/AiLibrarian.Api/appsettings.json for the keys to set.
+#   - Ingest pipeline — IngestWorker is not in this compose; Service Bus has
+#     no permissive local emulator and the worker's polling fallback is the
+#     Phase B slice. Manual psql inserts can seed source_chunks for
+#     /api/search/hybrid smoke testing.
+#
+# See docs/dev/local.md for the smoke-test recipe.
+
+services:
+  # ---------------------------------------------------------------------------
+  # Postgres + pgvector. Same image the testcontainer-backed RLS battery
+  # uses, so the dev stack and CI exercise the same Postgres build.
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: ailib-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ailibrarian
+      POSTGRES_USER: ailibrarian
+      POSTGRES_PASSWORD: ailibrarian_dev
+      # Postgres listens on all interfaces inside the compose network; the
+      # host port mapping below is what gates external psql access.
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # pg_isready is the canonical "Postgres ready to accept connections"
+      # probe -- separate from "Postgres process running". The migrations
+      # service uses depends_on: service_healthy to wait on this.
+      test: ["CMD-SHELL", "pg_isready -U ailibrarian -d ailibrarian"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  # ---------------------------------------------------------------------------
+  # One-shot Liquibase runner. Applies db/changelog/master.xml against the
+  # postgres service, then exits. The api + portal services wait on this
+  # via depends_on: service_completed_successfully -- they will not start
+  # until the schema is in place.
+  #
+  # Image version matches deploy/runbooks/pilot-minimal-azure.md so local
+  # and pilot environments run the same Liquibase build.
+  # ---------------------------------------------------------------------------
+  migrations:
+    image: liquibase/liquibase:4.29
+    container_name: ailib-migrations
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./db/changelog:/liquibase/changelog
+    command: >
+      --url=jdbc:postgresql://postgres:5432/ailibrarian
+      --username=ailibrarian
+      --password=ailibrarian_dev
+      --changeLogFile=changelog/master.xml
+      --logLevel=info
+      update
+
+  # ---------------------------------------------------------------------------
+  # API — ASP.NET Core minimal API. Phase 1 surfaces: search, ask, source
+  # CRUD, audit feed. Uses the same Dockerfile the GHCR Release Images
+  # workflow builds.
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: src/AiLibrarian.Api/Dockerfile
+    container_name: ailib-api
+    restart: unless-stopped
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      # ASPNETCORE_URLS is baked into the Dockerfile (http://+:8080). Don't
+      # override here -- the in-network hostname stays `api:8080` and the
+      # host port mapping below exposes it externally.
+
+      # Postgres connection. The empty-string default in appsettings.json
+      # makes every Postgres-backed endpoint return 503, so this string
+      # IS what flips the API into a useful state.
+      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=ailibrarian;Username=ailibrarian;Password=ailibrarian_dev"
+
+      # Audit ledger — fail-closed enabled (matches production). The
+      # startup probe in AuditWriterStartupProbe runs an INSERT-then-rollback
+      # against audit_events; migrations created the table, so the probe
+      # passes and the API serves traffic.
+      Auditing__WriterMode: "Postgres"
+      Auditing__DegradedModeAllowed: "false"
+      Auditing__RefuseToStartOnProbeFailure: "true"
+
+      # Portal CORS — the Portal service is at http://localhost:5215 on
+      # the host (see launchSettings.json). Matches the appsettings default.
+      Portal__CorsOrigins: "http://localhost:5215"
+
+      # No Azure AD configured -- the API treats requests as anonymous
+      # dev-mode requests. Auth is opt-in via AzureAd__TenantId+ClientId.
+    ports:
+      # 5071 matches src/AiLibrarian.Api/Properties/launchSettings.json so
+      # any local tooling that calls localhost:5071 keeps working.
+      - "5071:8080"
+
+  # ---------------------------------------------------------------------------
+  # Portal — Blazor Server. Calls the api service via the compose-network
+  # hostname `api`. Dev-mode auth (DevPortalUserContext) is auto-selected
+  # because no AzureAd:TenantId is set.
+  # ---------------------------------------------------------------------------
+  portal:
+    build:
+      context: .
+      dockerfile: src/AiLibrarian.Portal/Dockerfile
+    container_name: ailib-portal
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_started
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      # Portal reads Api:BaseUrl (falls back to http://localhost:5071/).
+      # Override to point at the api service inside the compose network.
+      Api__BaseUrl: "http://api:8080/"
+    ports:
+      - "5215:8080"
+
+# -----------------------------------------------------------------------------
+# Named volumes — postgres-data persists schema + seed data between
+# `docker compose up` runs. `docker compose down -v` wipes it; useful when
+# iterating on a migration you've edited in place.
+# -----------------------------------------------------------------------------
+volumes:
+  postgres-data:
+    name: ailib-postgres-data
