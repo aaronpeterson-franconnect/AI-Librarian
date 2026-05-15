@@ -81,9 +81,12 @@ public sealed class PostgresClaimGradeSinkTests : IClassFixture<RlsPostgresFixtu
 		latest!.Verdict.Should().Be(ClaimVerdict.NotSupported);
 
 		var snapshot = await sink.SnapshotAsync();
+		// The fixture is shared across this class's tests, so the snapshot
+		// may include grades for claims seeded by earlier tests in the
+		// suite. Filter to this test's claim before asserting.
 		snapshot.Should().ContainSingle(g => g.ClaimId == claimId);
 		// Snapshot is "latest per claim" by DISTINCT ON; v2 wins.
-		snapshot.Single().Verdict.Should().Be(ClaimVerdict.NotSupported);
+		snapshot.Single(g => g.ClaimId == claimId).Verdict.Should().Be(ClaimVerdict.NotSupported);
 	}
 
 	[SkippableFact]

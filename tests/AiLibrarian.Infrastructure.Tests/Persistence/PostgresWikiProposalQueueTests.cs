@@ -84,7 +84,13 @@ public sealed class PostgresWikiProposalQueueTests : IClassFixture<RlsPostgresFi
 		await RlsTestData.SeedIdentitiesAsync(_fixture.ConnectionString);
 
 		var page = await CreatePageAsync();
-		var librarian = RlsTestData.EngineeringContributorId;
+		// Use fresh users for BOTH deciders. The fixture is shared across
+		// this class's tests, and other tests in the class also transition
+		// proposals to "rejected" with EngineeringContributorId as the
+		// decider -- ListDecidedAsync would return their rows too. A
+		// per-test "librarian" id keeps the filtered result independent
+		// of execution order.
+		var librarian = await InsertOtherUserAsync();
 		var otherDecider = await InsertOtherUserAsync();
 
 		// Three decided proposals: two by librarian (one old, one recent),
