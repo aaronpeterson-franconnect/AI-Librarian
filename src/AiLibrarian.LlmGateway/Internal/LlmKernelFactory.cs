@@ -115,7 +115,18 @@ internal static class LlmKernelFactory
 		// disposal; for our purposes the kernel is a singleton, so the
 		// HttpClient lives for the process. The mock is in-network so
 		// SocketsHttpHandler defaults are fine.
-		var httpClient = new HttpClient { BaseAddress = new Uri(endpoint) };
+		//
+		// BaseAddress must include `/v1/` because Semantic Kernel's
+		// OpenAITextEmbeddingGeneration appends only `embeddings`
+		// (relative path) to whatever BaseAddress we supply. Real
+		// OpenAI URL is api.openai.com/v1/embeddings, so the client
+		// assumes /v1/ is part of the BaseAddress. Real Azure OpenAI
+		// URL is *.openai.azure.com/openai/deployments/X/embeddings
+		// which the AzureOpenAI client builds differently. So we
+		// hand-craft the BaseAddress here to land on the mock's
+		// /v1/embeddings route (which mirrors the real OpenAI shape).
+		var baseUri = new Uri(endpoint.EndsWith('/') ? endpoint + "v1/" : endpoint + "/v1/");
+		var httpClient = new HttpClient { BaseAddress = baseUri };
 
 		// Embedding ID becomes the model identifier on the OpenAI shape;
 		// the mock ignores it but downstream code carries it through
