@@ -39,7 +39,10 @@ services:
     ports:
       - "9080:8080"
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+      # curl (installed by the LlmMock Dockerfile) probes /health; that
+      # endpoint is a synchronous Ok() so a successful response means
+      # the ASP.NET pipeline is ready to serve embeddings calls too.
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
       interval: 5s
       timeout: 3s
       retries: 10
