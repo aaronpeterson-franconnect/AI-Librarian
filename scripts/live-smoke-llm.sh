@@ -87,7 +87,11 @@ echo "=== STEP 4: /api/search/hybrid returns 200 with mock embeddings ==="
 # scoring it MAY appear in results. We don't require a hit -- the gate
 # is "200 with the expected envelope shape", which proves the embedding
 # call to the mock succeeded.
-S=$(curl.exe -s -w "\n%{http_code}" -X POST "${API_BASE}/api/search/hybrid" \
+# Use `curl` (not `curl.exe`) -- this script runs on Ubuntu in CI and
+# on whatever the developer has locally. The `curl.exe` form only
+# matters in PowerShell where bare `curl` aliases to Invoke-WebRequest;
+# bash everywhere routes `curl` to the real binary.
+S=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE}/api/search/hybrid" \
 	-H "Content-Type: application/json" \
 	-d '{"query":"live smoke seed"}')
 CODE=$(echo "${S}" | tail -n1)
