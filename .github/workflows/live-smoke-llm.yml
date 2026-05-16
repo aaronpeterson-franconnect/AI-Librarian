@@ -1,0 +1,81 @@
+name: Live Smoke (LLM mock)
+
+# Boots the docker-compose stack with the LLM-mock override on the CI
+# runner and exercises /api/search/hybrid against a working (mocked)
+# embedding provider. Catches regressions that the regular Live Smoke
+# can't:
+#   - changes to the search route that break under a configured LLM
+#     gateway (the no-mock smoke only sees the 503 path)
+#   - changes to LlmGateway provider wiring (Endpoint, ApiKey,
+#     EmbeddingDeployment) that break the embed call shape
+#   - changes to the HybridSearchResponse envelope contract
+#     (correlationId, embeddingDeployment, hits[])
+#   - mock-vs-real Azure OpenAI URL drift (mock matches the SDK's
+#     {endpoint}/openai/deployments/{deployment}/embeddings shape)
+#
+# Two CI jobs (this one + the no-mock live-smoke.yml) gate orthogonal
+# behaviors -- the no-mock job protects the "503 when LLM is missing"
+# contract, this job protects the "200 when LLM is wired" contract.
+# Together they bracket the search route's full behavior.
+#
+# Same asserter pattern as live-smoke.yml: scripts/live-smoke-llm.sh
+# is the source of truth for the assertions; CI calls the same script
+# developers run locally with the compose override.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  live-smoke-llm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Pre-pull base images
+        # Same pre-pull as live-smoke.yml so a slow Docker Hub doesn't
+        # masquerade as a stack-startup failure.
+        run: |
+          docker pull pgvector/pgvector:pg16 &
+          docker pull liquibase/liquibase:4.29 &
+          wait
+
+      - name: Build + start compose (postgres, migrations, api, llm-mock)
+        # Portal stays excluded -- not needed for this gate, saves ~45s
+        # of image build time. The override file (docker-compose.llm-mock.yml)
+        # injects the LlmGateway env vars on the api service.
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.llm-mock.yml \
+            up -d --build postgres migrations api llm-mock
+          docker compose ps -a
+
+      - name: Run smoke
+        run: bash scripts/live-smoke-llm.sh
+
+      - name: Dump container logs on failure
+        if: failure()
+        run: |
+          echo '##[group]ailib-postgres logs'
+          docker compose -f docker-compose.yml -f docker-compose.llm-mock.yml logs postgres
+          echo '##[endgroup]'
+          echo '##[group]ailib-migrations logs'
+          docker compose -f docker-compose.yml -f docker-compose.llm-mock.yml logs migrations
+          echo '##[endgroup]'
+          echo '##[group]ailib-api logs'
+          docker compose -f docker-compose.yml -f docker-compose.llm-mock.yml logs api
+          echo '##[endgroup]'
+          echo '##[group]ailib-llm-mock logs'
+          docker compose -f docker-compose.yml -f docker-compose.llm-mock.yml logs llm-mock
+          echo '##[endgroup]'
+
+      - name: Tear down
+        if: always()
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.llm-mock.yml down -v

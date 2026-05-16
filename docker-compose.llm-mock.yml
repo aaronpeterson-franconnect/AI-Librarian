@@ -1,0 +1,65 @@
+# Compose override that boots a deterministic Azure OpenAI embeddings
+# mock alongside the stack and points the api at it. Activate with:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.llm-mock.yml up -d
+#
+# What changes vs. the default stack:
+#   - A new `llm-mock` service joins the network on port 9080 (host) /
+#     8080 (container).
+#   - The `api` service's environment gets four extra LlmGateway env
+#     vars that flip the Azure OpenAI provider to Enabled=true and
+#     point its Endpoint at http://llm-mock:8080. `/api/search/hybrid`
+#     now returns 200 instead of 503 because the API can hit a working
+#     embeddings endpoint.
+#   - The `api` service depends on `llm-mock` being healthy before it
+#     starts (otherwise the audit-writer startup probe runs before the
+#     LLM gateway is reachable and emits a "probe failed" log).
+#
+# Why this isn't the default: the live-smoke.yml workflow asserts that
+# `/api/search/hybrid` returns 503 with the documented detail string
+# when no LLM provider is configured. Keeping the mock opt-in preserves
+# that gate (regression: someone silently flips the API to serve empty
+# 200 results when LLM is missing). The PR-coverage of the with-mock
+# behavior comes from a separate workflow (live-smoke-llm.yml).
+#
+# Caveats: see src/AiLibrarian.LlmMock/Program.cs -- vectors are
+# hash-seeded uniform random, so semantic similarity is not preserved.
+# Useful for "the gateway plumbing works" gating; NOT for "retrieval
+# finds the right chunks" quality evaluation.
+
+services:
+  llm-mock:
+    build:
+      context: .
+      dockerfile: src/AiLibrarian.LlmMock/Dockerfile
+    container_name: ailib-llm-mock
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+    ports:
+      - "9080:8080"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    # Compose merges the env block on top of the base file's `environment`
+    # mapping. Existing keys (ConnectionStrings__Postgres etc.) carry
+    # forward unchanged.
+    environment:
+      LlmGateway__Providers__azure-openai__Enabled: "true"
+      LlmGateway__Providers__azure-openai__Endpoint: "http://llm-mock:8080"
+      LlmGateway__Providers__azure-openai__ApiKey: "mock-key"
+      LlmGateway__Providers__azure-openai__ChatDeployment: "mock-chat"
+      LlmGateway__Providers__azure-openai__EmbeddingDeployment: "text-embedding-3-large"
+      Search__EmbeddingDeployment: "text-embedding-3-large"
+    depends_on:
+      # Re-declares the base file's migrations dependency PLUS the new
+      # llm-mock one. Compose merges depends_on by union (not replace),
+      # so migrations is still gated.
+      migrations:
+        condition: service_completed_successfully
+      llm-mock:
+        condition: service_healthy

@@ -120,31 +120,42 @@ docker compose logs postgres   # Postgres logs (pg_isready healthcheck failures 
 docker exec -it ailib-postgres psql -U ailibrarian -d ailibrarian
 ```
 
-## Phase 2B — deterministic LLM mock for full retrieval smoke
+## Phase 2B — deterministic LLM mock (now shipped)
 
-The current Live Smoke workflow exercises Postgres-only endpoints
-(`/health`, `/api/departments`, `/api/audit/recent`) plus the
-documented 503 contract for `/api/search/hybrid` when no LLM is
-configured. It does NOT catch regressions inside the retrieval or
-synthesis pipeline because those need an embedding/chat provider.
+The Phase 2B mock landed. `src/AiLibrarian.LlmMock/` ships a small
+ASP.NET Core service that mimics Azure OpenAI's
+`/openai/deployments/{deployment}/embeddings` endpoint with hash-seeded
+1536-dim vectors. Same input → same vector across runs, which is the
+property that lets the eval harness produce reproducible retrieval
+rankings without paying for real LLM calls.
 
-Two options to add real-retrieval coverage:
+Bring it up as a compose override:
 
-1. **GitHub secrets + Azure OpenAI** — schedule a nightly workflow
-   that pulls keys from `${{ secrets.AZURE_OPENAI_* }}` and wires
-   them through `env_file:` into the compose api service. Burns
-   real tokens (~$0.50/run for the 5-case corpus) and only runs on
-   trusted contexts (won't fire on forked-PR runs).
-2. **Deterministic embedding mock** — a tiny service in compose
-   that responds to `POST /openai/deployments/*/embeddings` with a
-   hash-seeded float vector. The API can't tell it's not Azure
-   OpenAI; pgvector cosine-similarity stays meaningful because the
-   same input produces the same vector. Zero LLM cost, runs on
-   every PR including forks.
+```bash
+docker compose -f docker-compose.yml -f docker-compose.llm-mock.yml \
+  up -d --build postgres migrations api llm-mock
+```
 
-Recommend (2) for the every-PR signal and (1) as a nightly tripwire
-that confirms the real provider hasn't drifted. Tracked as Phase 2B
-of the docker-compose dev-stack work.
+Then `/api/search/hybrid` returns **200 with a `hits[]` envelope**
+instead of the 503 the no-mock smoke covers. The
+`scripts/live-smoke-llm.sh` script seeds a minimal department + user +
+source + chunk and exercises the gate; same shape as
+`scripts/live-smoke.sh` but for the LLM-on path.
+
+**What the mock is NOT:**
+
+- It doesn't preserve semantic similarity (random hashes don't),
+  so retrieval ranking is meaningless against a real corpus. Good
+  for "plumbing works"; not for "retrieval finds the right chunks".
+- It only implements the embeddings endpoint. `/api/ask` (which
+  needs chat completions) still 503s. Extending to chat is a
+  follow-up.
+
+**For real retrieval quality testing**, point `HttpEvalBackend`
+(`tests/AiLibrarian.Eval/Runner/HttpEvalBackend.cs`) at a deployed API
+wired to real Azure OpenAI. The mock + the cloud-deployed API are
+complementary: mock proves the gateway plumbing on every PR; real
+Azure OpenAI proves the retrieval/synthesis quality on a schedule.
 
 ## Known limitations (Phase A)
 
