@@ -40,12 +40,17 @@ var app = builder.Build();
 // gate before they start.
 app.MapGet("/health", () => Results.Ok(new { status = "ok", mock = "azure-openai-embeddings" }));
 
-// Embeddings. The route catches any deployment name; the SK-built URL
-// is `{endpoint}/openai/deployments/{deployment}/embeddings?api-version=...`
-// and we don't care which deployment name the caller picked -- we just
-// hash whatever input arrives.
-app.MapPost("/openai/deployments/{deployment}/embeddings",
-	async (string deployment, HttpRequest req, ILogger<Program> logger) =>
+// Embeddings handler. Registered against TWO routes:
+//   1. /openai/deployments/{deployment}/embeddings -- the URL the
+//      Azure OpenAI client builds. This is the canonical path the
+//      mock was designed to imitate.
+//   2. /v1/embeddings -- the URL the plain OpenAI client builds. We
+//      need both because Semantic Kernel's AzureOpenAI client
+//      validates that the endpoint starts with https:// (a check we
+//      can't bypass), so the compose stack uses the OpenAI client
+//      with a custom BaseAddress instead. See LlmKernelFactory's
+//      mock-mode detection.
+static async Task<IResult> Embed(string deployment, HttpRequest req, ILogger<Program> logger)
 {
 	using var doc = await JsonDocument.ParseAsync(req.Body).ConfigureAwait(false);
 	var root = doc.RootElement;
@@ -86,7 +91,15 @@ app.MapPost("/openai/deployments/{deployment}/embeddings",
 		deployment, inputs.Length, VectorDimensions);
 
 	return Results.Json(response, MockJsonOptions.Default);
-});
+}
+
+// Register the handler on both Azure-OpenAI-shaped and OpenAI-shaped
+// routes. `deployment` is captured from the Azure-shaped URL; the
+// OpenAI-shaped URL substitutes a fixed identifier so the log line
+// makes the route source clear.
+app.MapPost("/openai/deployments/{deployment}/embeddings", Embed);
+app.MapPost("/v1/embeddings",
+	async (HttpRequest req, ILogger<Program> logger) => await Embed("openai-v1", req, logger));
 
 app.MapFallback((HttpContext ctx, ILogger<Program> logger) =>
 {
