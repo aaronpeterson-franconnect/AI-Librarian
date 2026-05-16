@@ -343,6 +343,7 @@ output postgresServerId string = postgres.outputs.serverId
 output postgresFqdn string = postgres.outputs.fqdn
 output postgresServerName string = postgresServerName
 output postgresAdministratorLogin string = postgres.outputs.administratorLoginOut
+output postgresApplicationDatabaseName string = postgres.outputs.applicationDatabaseNameOut
 
 output containerAppsEnvironmentId string = acaEnv.outputs.environmentId
 output containerAppsEnvironmentName string = acaEnv.outputs.environmentName

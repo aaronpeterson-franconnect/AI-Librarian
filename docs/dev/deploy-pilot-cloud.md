@@ -14,7 +14,7 @@ graduated path.
 |---|---|---|
 | 1 | Azure subscription with Contributor on a target RG | `az account set --subscription <id>` |
 | 2 | Resource group | `az group create -n rg-ailib-pilot -l eastus2` |
-| 3 | Postgres admin password (≥16 chars, complex) | `$env:AILIB_PG_ADMIN_PASSWORD = '<generated>'` |
+| 3 | Postgres admin password — **see the password rules below before generating one** | `$env:AILIB_PG_ADMIN_PASSWORD = '<see below>'` |
 | 4 | GHCR images set to public visibility | GitHub repo → Packages → each of `ailib-api`, `ailib-ingest`, `ailib-portal` → Package settings → Change visibility → Public |
 | 5 | Docker Desktop running (only needed for Liquibase one-shot) | `docker --version` |
 | 6 | Bicep CLI ≥ 0.21 | bundled with Azure CLI ≥ 2.50 |
@@ -22,6 +22,45 @@ graduated path.
 The GHCR-public step (#4) is the one-time decision. Once flipped,
 every future Release Images workflow run is automatically reachable
 from Container Apps without re-clicking anything.
+
+### Postgres password rules (read before generating)
+
+The password flows through three layers, each with different forbidden
+characters:
+
+| Layer | Forbids |
+|---|---|
+| Azure Postgres Flexible Server | `/`, `\`, `"` |
+| `cmd.exe` (az CLI wrapper on Windows) | `<`, `>`, `&`, `|`, `^`, `(`, `)`, `;`, `,`, `'`, `"`, `` ` ``, `?`, `*`, `[`, `]`, `{`, `}`, `~` |
+| ADO.NET connection string parser | `;` (terminates value), `'`, `"` |
+
+The intersection of "safe everywhere" is alphanumerics + `!@#%+=_-`. A
+naive PowerShell generator over `ASCII 33..126` produces strings that
+work in psql but break the deploy CLI with cryptic
+`The syntax of the command is incorrect.` errors.
+
+**Safe generator (alphanumerics + 8 symbols, 24 chars):**
+
+```powershell
+$chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#%+=_-'
+$env:AILIB_PG_ADMIN_PASSWORD = -join ((1..24) | ForEach-Object { $chars[(Get-Random -Maximum $chars.Length)] })
+```
+
+Or for a memorable sandbox value:
+
+```powershell
+$env:AILIB_PG_ADMIN_PASSWORD = 'PilotPg-2026-EastUs2-A1b'   # 24 chars, upper+lower+digit+dash, no shell metachars
+```
+
+Verify only safe symbols show up (everything alphanumeric masked to `X`):
+
+```powershell
+$env:AILIB_PG_ADMIN_PASSWORD -replace '[a-zA-Z0-9]', 'X'
+# Expected: only `-`, `!`, `@`, `#`, `%`, `+`, `=`, `_` in the output -- NO `<`, `|`, `'`, `$`, `;`
+```
+
+Save the value somewhere durable (1Password etc.) — you'll need it for
+the Liquibase step + the connection-string wire-up.
 
 ## The 7-step sequence
 
@@ -63,36 +102,66 @@ az provider register --namespace Microsoft.OperationalInsights --wait
 az deployment group what-if `
   --resource-group $RG `
   --template-file deploy/bicep/main.bicep `
-  --parameters deploy/bicep/parameters/pilot-cloud.bicepparam `
-  --parameters postgresAdminPassword="$Env:AILIB_PG_ADMIN_PASSWORD"
+  --parameters deploy/bicep/parameters/pilot-cloud.bicepparam
 ```
 
-Surfaces every resource Bicep would create; lets you cancel before
-spending money if anything looks off (e.g., wrong region, wrong
-namePrefix would clobber something).
+> **Important:** notice we do NOT pass `--parameters postgresAdminPassword=...`.
+> The bicepparam file reads the password from
+> `$env:AILIB_PG_ADMIN_PASSWORD` at compile time. Inlining the password
+> in `--parameters` would route it through `cmd.exe` (which `az.cmd`
+> wraps under the hood), and any shell metachar in the password trips
+> `The syntax of the command is incorrect.` Reading it from the env
+> var keeps `cmd.exe` out of the password path entirely.
+
+What-if surfaces every resource Bicep would create; lets you cancel
+before spending money if anything looks off (e.g., wrong region,
+wrong namePrefix would clobber something).
 
 ### 3. First Bicep deploy (data plane only)
 
-Brings up Postgres + Service Bus + Blob + Key Vault + Container Apps
-Environment + Log Analytics + App Insights + the workload-identity. The
-three Container Apps stay disabled (default).
+Brings up Postgres + ailibrarian database + Service Bus + Blob + Key
+Vault + Container Apps Environment + Log Analytics + App Insights +
+the workload-identity. The three Container Apps stay disabled
+(default).
 
 ```powershell
 az deployment group create `
   --resource-group $RG `
   --template-file deploy/bicep/main.bicep `
-  --parameters deploy/bicep/parameters/pilot-cloud.bicepparam `
-  --parameters postgresAdminPassword="$Env:AILIB_PG_ADMIN_PASSWORD"
+  --parameters deploy/bicep/parameters/pilot-cloud.bicepparam
 ```
 
-~10 minutes. The Postgres flexible server is the long pole.
+~10 minutes. The Postgres flexible server is the long pole. The
+`ailibrarian` database is created as a child resource of the server
+(see `modules/postgres-flexible.bicep`); no separate
+`az postgres flexible-server db create` step is required.
 
 ### 4. Run Liquibase against the Azure Postgres
 
+The Postgres firewall only opens to "Azure services" by default — a
+container running locally is blocked. Open it for your current public
+IP so Liquibase can connect:
+
 ```powershell
+$PG_NAME = az deployment group show -g $RG -n main `
+  --query 'properties.outputs.postgresServerName.value' -o tsv
 $PG_FQDN = az deployment group show -g $RG -n main `
   --query 'properties.outputs.postgresFqdn.value' -o tsv
+$MY_IP = (Invoke-RestMethod -Uri 'https://api.ipify.org').Trim()
 
+az postgres flexible-server firewall-rule create `
+  --resource-group $RG `
+  --name $PG_NAME `
+  --rule-name "DeployerLocal-$(Get-Date -Format 'yyyyMMdd')" `
+  --start-ip-address $MY_IP `
+  --end-ip-address $MY_IP
+```
+
+(`az` will warn about an upcoming flag rename in v2.86.0 — harmless.)
+
+Then run Liquibase:
+
+```powershell
 docker run --rm `
   -v "${PWD}/db/changelog:/liquibase/changelog" `
   liquibase/liquibase:4.29 `
@@ -105,6 +174,21 @@ docker run --rm `
 
 ~30 seconds. Same image + same migrations the local compose stack
 uses, so any "works on compose" guarantees translate to Azure here.
+
+Verify it landed:
+
+```powershell
+docker run --rm `
+  -v "${PWD}/db/changelog:/liquibase/changelog" `
+  liquibase/liquibase:4.29 `
+  --url="jdbc:postgresql://${PG_FQDN}:5432/ailibrarian?sslmode=require" `
+  --username="ailibrarian" `
+  --password="$Env:AILIB_PG_ADMIN_PASSWORD" `
+  --changeLogFile="changelog/master.xml" `
+  status
+```
+
+Expect: `ailibrarian@jdbc:... is up to date`.
 
 ### 5. Capture the API FQDN
 
@@ -119,7 +203,6 @@ az deployment group create `
   --resource-group $RG `
   --template-file deploy/bicep/main.bicep `
   --parameters deploy/bicep/parameters/pilot-cloud.bicepparam `
-  --parameters postgresAdminPassword="$Env:AILIB_PG_ADMIN_PASSWORD" `
   --parameters deployApiContainerApp=true `
   --parameters apiContainerImage="ghcr.io/${GHCR_OWNER}/ailib-api:${IMAGE_TAG}" `
   --parameters deployIngestWorkerContainerApp=true `
@@ -135,7 +218,6 @@ az deployment group create `
   --resource-group $RG `
   --template-file deploy/bicep/main.bicep `
   --parameters deploy/bicep/parameters/pilot-cloud.bicepparam `
-  --parameters postgresAdminPassword="$Env:AILIB_PG_ADMIN_PASSWORD" `
   --parameters deployApiContainerApp=true `
   --parameters apiContainerImage="ghcr.io/${GHCR_OWNER}/ailib-api:${IMAGE_TAG}" `
   --parameters deployIngestWorkerContainerApp=true `
@@ -147,6 +229,18 @@ az deployment group create `
 
 ~5 minutes per sub-step. Container Apps' revision system handles the
 re-deploy without dropping traffic (no traffic to drop yet).
+
+**Postgres "ServerIsBusy" retry:** the Postgres `azure.extensions`
+configuration block sometimes flags a `ServerIsBusy` error on the
+second deploy ("Cannot complete operation while server is busy
+processing another operation"). It's transient -- Postgres is finishing
+work from the first deploy. Re-run the same command; usually
+succeeds on the second try. To check the server state directly:
+
+```powershell
+az postgres flexible-server show -g $RG -n $PG_NAME --query '{state:state}' -o table
+# Wait for: State = Ready before re-running.
+```
 
 ### 6. Wire connection strings into the Container Apps
 
@@ -210,36 +304,54 @@ extra env-var pass needed for it.
 
 ### 7. Smoke
 
+Same six assertions our local Live Smoke workflow runs against
+docker-compose, now against the live cloud API.
+
+> **PowerShell gotcha:** `curl` in PowerShell is aliased to
+> `Invoke-WebRequest`, which **doesn't accept `-H` or `-d` flags**. Use
+> `curl.exe` (ships with Windows 10+) for any POST with headers, or
+> use `Invoke-RestMethod` natively. The GETs below work fine via the
+> alias.
+
 ```powershell
 $PORTAL_FQDN = az deployment group show -g $RG -n main `
   --query 'properties.outputs.portalContainerAppFqdn.value' -o tsv
 
-# Health -- expect HTTP 200 + audit circuit Closed (same shape as local
-# compose). This is the cloud equivalent of scripts/live-smoke.sh STEP 1.
+# 1. /health -- expect HTTP 200 + audit circuit Closed (same shape as
+#    local compose). Cloud equivalent of scripts/live-smoke.sh STEP 1.
 curl "https://${API_FQDN}/health"
 
-# Departments -- expect empty {"items":[]}
+# 2. /api/audit/recent -- expect system.audit.writer.ready row, proving
+#    the startup probe wrote to the cloud Postgres at boot.
+curl "https://${API_FQDN}/api/audit/recent?limit=10"
+
+# 3. Seed a department via psql (the deployer-local firewall rule from
+#    step 4 still applies). `app.is_authenticated/is_employee=true`
+#    push the RLS session context so the INSERT passes.
+docker run --rm postgres:16 psql `
+  "host=${PG_FQDN} port=5432 dbname=ailibrarian user=ailibrarian password=$Env:AILIB_PG_ADMIN_PASSWORD sslmode=require" `
+  -c "SET app.is_authenticated = 'true'; SET app.is_employee = 'true'; INSERT INTO departments (id, name, display_name) VALUES ('11111111-1111-1111-1111-111111111111', 'engineering', 'Engineering') ON CONFLICT (name) DO NOTHING;"
+
+# 4. /api/departments -- expect the seeded row to round-trip
 curl "https://${API_FQDN}/api/departments"
 
-# Open the Portal
+# 5. /api/audit/recent again -- expect a departments.list event
+curl "https://${API_FQDN}/api/audit/recent?limit=5"
+
+# 6. /api/search/hybrid -- expect 503 with 'LlmGateway embedding provider'
+#    in the body (the silent-degradation gate). USE curl.exe FOR POST.
+curl.exe -i -X POST "https://${API_FQDN}/api/search/hybrid" `
+  -H "Content-Type: application/json" `
+  -d '{\"query\":\"smoke\"}'
+
+# 7. Open the Portal in a browser; the Sources page should show the
+#    Engineering department after the seed above.
 Start-Process "https://${PORTAL_FQDN}"
 ```
 
 If `/health` returns `audit.circuitState=Closed` and the Portal home
 renders, the data plane + audit + Postgres wiring are all green
 against Azure. Same proof shape as the local Live Smoke workflow.
-
-### 8 (optional). Seed a pilot department
-
-```powershell
-docker run --rm `
-  postgres:16 psql `
-  "host=${PG_FQDN} port=5432 dbname=ailibrarian user=ailibrarian password=$Env:AILIB_PG_ADMIN_PASSWORD sslmode=require" `
-  -c "SET app.is_authenticated = 'true'; SET app.is_employee = 'true'; INSERT INTO departments (id, name, display_name) VALUES ('11111111-1111-1111-1111-111111111111', 'engineering', 'Engineering') ON CONFLICT (name) DO NOTHING;"
-
-curl "https://${API_FQDN}/api/departments"
-# → {"items":[{"id":"11111111-...","name":"engineering","displayName":"Engineering"}]}
-```
 
 ## Tear down
 
@@ -286,3 +398,13 @@ Owner/UAA at that point.
 **Bicep deploy says "the resource type Microsoft.App/managedEnvironments is not registered":** `az provider register --namespace Microsoft.App` then wait ~5 min.
 
 **Liquibase fails with `relation "databasechangelog" does not exist`:** Postgres is reachable but the `ailibrarian` database doesn't exist yet. The Bicep postgres-flexible module creates it; if the deploy succeeded the DB exists -- re-check the connection string fqdn and port.
+
+**Liquibase fails with `FATAL: database "ailibrarian" does not exist`:** older Bicep deploys (before the database resource was folded into `modules/postgres-flexible.bicep`) created the server without the database. Run `az postgres flexible-server db create --resource-group $RG --server-name $PG_NAME --database-name ailibrarian` once, then retry Liquibase. Re-deploys via the current `main.bicep` will create it automatically next time.
+
+**`az deployment group what-if` returns `The syntax of the command is incorrect.`:** your `$env:AILIB_PG_ADMIN_PASSWORD` contains a `cmd.exe` metacharacter (`<`, `>`, `&`, `|`, `^`, `'`, etc.) AND you're passing `--parameters postgresAdminPassword=$Env:...` on the CLI. Two fixes: (a) drop the `--parameters` line for the password — the `pilot-cloud.bicepparam` reads the env var directly; (b) regenerate the password using the safe-charset generator in the "Postgres password rules" section above.
+
+**`curl` (PowerShell alias for `Invoke-WebRequest`) errors with "Cannot bind parameter 'Headers'":** you tried to use the alias for a POST with `-H`. The alias doesn't accept the `-H`/`-d` curl flags. Use `curl.exe` (the real Windows curl) for any POST with headers.
+
+**`Authorization failed ... 'Microsoft.Authorization/roleAssignments/write'`:** the deployer is `Contributor` only, not `Owner`/`User Access Administrator`. Either ask someone with Owner to grant you Owner, or keep `deployIdentityRbac=false` in `pilot-cloud.bicepparam` (already the default in this file).
+
+**Bicep deploy of `azure.extensions` fails with `ServerIsBusy`:** transient. Postgres is finishing work from the previous deploy. Wait ~30s, check `az postgres flexible-server show -g $RG -n $PG_NAME --query state -o tsv` returns `Ready`, then re-run.

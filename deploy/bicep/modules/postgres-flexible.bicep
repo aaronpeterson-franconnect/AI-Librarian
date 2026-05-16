@@ -27,6 +27,9 @@ param skuName string = 'Standard_B1ms'
 @description('Burstable tier name.')
 param skuTier string = 'Burstable'
 
+@description('Name of the application database to create on the server. The Liquibase changelog applies its schema against this database; pilots used to require a separate `az postgres flexible-server db create` call -- this parameter folds that into the same deploy.')
+param applicationDatabaseName string = 'ailibrarian'
+
 resource flexibleServer 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' = {
 	name: serverName
 	location: location
@@ -87,6 +90,26 @@ resource allowAzureServicesFirewall 'Microsoft.DBforPostgreSQL/flexibleServers/f
 	}
 }
 
+// Application database. The Liquibase migration runner (Phase 0 runbook
+// step 4) targets this database explicitly via `dbname=<name>` in the
+// JDBC URL. Without this resource, the server provisions empty and the
+// pilot operator must `az postgres flexible-server db create` between
+// Bicep and Liquibase -- a discovered-mid-deploy gotcha during the first
+// cloud-hosted pilot walkthrough (2026-05-15). Folding it in here keeps
+// the runbook to one Bicep step.
+resource applicationDatabase 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2024-08-01' = {
+	parent: flexibleServer
+	name: applicationDatabaseName
+	properties: {
+		// Postgres defaults via the template's collation; explicit values
+		// match what `CREATE DATABASE` would pick on a fresh Flexible
+		// Server. Specifying them here documents the assumption and
+		// avoids drift if Microsoft changes the server defaults.
+		charset: 'UTF8'
+		collation: 'en_US.utf8'
+	}
+}
+
 @description('Flexible server resource id.')
 output serverId string = flexibleServer.id
 
@@ -95,3 +118,6 @@ output fqdn string = flexibleServer.properties.fullyQualifiedDomainName
 
 @description('Echo of the administrator login passed at deploy time.')
 output administratorLoginOut string = administratorLogin
+
+@description('Name of the application database created on the server.')
+output applicationDatabaseNameOut string = applicationDatabase.name
