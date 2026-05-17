@@ -120,6 +120,59 @@ docker compose logs postgres   # Postgres logs (pg_isready healthcheck failures 
 docker exec -it ailib-postgres psql -U ailibrarian -d ailibrarian
 ```
 
+## Phase B — full ingest pipeline (Azurite + SB emulator + IngestWorker)
+
+Bring up the full upload→ingest round-trip locally:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.ingest.yml \
+  up -d --build
+bash scripts/live-smoke-ingest.sh
+```
+
+`docker-compose.ingest.yml` adds four services to the stack:
+
+- **`azurite`** — Microsoft's official Azure Storage emulator (blob only). Port `10000` (host) / `10000` (container). Uses the well-known dev-mode account `devstoreaccount1` documented in the Azurite README.
+- **`sb-emulator-db`** — SQL Server Edge that the Service Bus emulator stores state in. No host port; internal-only.
+- **`sb-emulator`** — Microsoft's official Service Bus emulator. Ports `5672` (AMQP) and `5300` (HTTP management). Pre-configured via `deploy/sb-emulator-config.json` with a single queue named `ingest-jobs`.
+- **`ingest-worker`** — the `AiLibrarian.IngestWorker` .NET service, wired to all three.
+
+The override also injects env vars into the `api` service so
+`/api/portal/sources/upload` returns 200 (instead of 503).
+
+`scripts/live-smoke-ingest.sh` round-trips a markdown file through
+the full pipeline and asserts the chunk lands in `source_chunks`
+with matching content. CI runs the same script via
+`.github/workflows/live-smoke-ingest.yml`.
+
+### Layering with the LLM-mock profile
+
+Combine both overrides if you want embeddings during ingest too:
+
+```bash
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.ingest.yml \
+  -f docker-compose.llm-mock.yml \
+  up -d --build
+```
+
+Order matters: `llm-mock.yml` overrides `ingest.yml`'s env vars
+where they conflict (the LLM-mock toggle wins on
+`LlmGateway:Providers:azure-openai:Enabled`, etc.). For Phase B's
+own CI gate the LLM stays off — the worker's
+`IngestWorker__Processing__GenerateEmbeddings=false` env var skips
+the embed step, so the smoke doesn't depend on the LLM provider.
+
+### What this still doesn't cover
+
+- **Wiki Maintainer cascade**. Phase 2 schema; not exercised by the
+  ingest pipeline.
+- **Skills.Pdf / Skills.Office**. The smoke uploads markdown; the
+  PDF/Office skills are exercised by their own unit tests but not in
+  the live ingest round-trip. Worth a follow-up that uploads a
+  sample PDF and asserts chunks come through.
+
 ## Phase 2B — deterministic LLM mock (v1 shipped, CI gate deferred)
 
 The Phase 2B mock landed as a *manually-runnable* dev tool.

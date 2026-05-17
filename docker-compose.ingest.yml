@@ -1,0 +1,177 @@
+# Compose override that adds the full ingest pipeline: Azurite for
+# Blob Storage, Microsoft's Service Bus emulator (with its required
+# SQL Server Edge sidecar), and the IngestWorker. Activate with:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.ingest.yml up -d --build
+#
+# What changes vs. the default stack:
+#   - Azurite joins the network on port 10000 (host) / 10000 (container),
+#     emulates Azure Blob Storage with the well-known dev account.
+#   - sb-emulator-db joins on the back of the network -- SQL Server Edge
+#     that the SB emulator stores its state in. No host port mapped (the
+#     SB emulator is the only thing that talks to it).
+#   - sb-emulator joins on port 5672 (AMQP) and 5300 (HTTP management).
+#     Pre-configured via deploy/sb-emulator-config.json with a single
+#     queue named `ingest-jobs` (matching the API + Worker's default).
+#   - ingest-worker (the AiLibrarian.IngestWorker .NET service) joins
+#     wired to both emulators + the same Postgres the api uses.
+#   - The api service gets `IngestQueue:ConnectionString` +
+#     `BlobStorage:ConnectionString` env vars pointing at the local
+#     emulators, so `/api/portal/sources/upload` returns 200 instead
+#     of the 503 it returns without these.
+#
+# Microsoft's SB emulator requires accepting the EULA via env var
+# (ACCEPT_EULA=Y). This is unattended-friendly for CI/dev because the
+# emulator is gratis under the Microsoft Software License Terms; the
+# emulator is intended for local development and CI ingest pipeline
+# testing.
+#
+# What's still NOT in this profile (deferred):
+# - Embeddings during ingest. The worker's
+#   IngestWorker__Processing__GenerateEmbeddings env var defaults
+#   to false here, so the worker downloads + parses + chunks but
+#   does not call the LLM. Pair this with docker-compose.llm-mock.yml
+#   when you want embeddings during ingest too.
+# - Phase 1 .docx/.pdf/.pptx skills. Same gate as above -- those
+#   pipeline stages run as long as RunContentPipeline=true, which
+#   IS the default here.
+
+services:
+  # ---------------------------------------------------------------------------
+  # Azurite -- Microsoft's official Azure Storage emulator. The blob
+  # service listens on 10000; we don't need queues/tables for ingest.
+  # The well-known dev-mode account is
+  # `devstoreaccount1` with the public key below (documented at
+  # https://learn.microsoft.com/azure/storage/common/storage-use-azurite).
+  # ---------------------------------------------------------------------------
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:latest
+    container_name: ailib-azurite
+    restart: unless-stopped
+    command: "azurite-blob --blobHost 0.0.0.0 --location /workspace --skipApiVersionCheck"
+    volumes:
+      - azurite-data:/workspace
+    ports:
+      - "10000:10000"
+    healthcheck:
+      # Azurite has no /health endpoint; a simple TCP probe is enough
+      # to gate dependent services on "blob socket accepting connections".
+      test: ["CMD-SHELL", "nc -z localhost 10000 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ---------------------------------------------------------------------------
+  # SQL Server Edge -- the SB emulator's state backend. Listens only
+  # inside the compose network; no host port mapped. Password is
+  # local-emulator-only and never used by anything outside this file.
+  # ---------------------------------------------------------------------------
+  sb-emulator-db:
+    image: mcr.microsoft.com/azure-sql-edge:latest
+    container_name: ailib-sb-db
+    restart: unless-stopped
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "SbEmulator-LocalDev-Pwd-2026!"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U SA -P 'SbEmulator-LocalDev-Pwd-2026!' -No -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Microsoft's Azure Service Bus emulator. Reads the queue topology
+  # from the volume-mounted Config.json at startup; supports queues +
+  # topics + subscriptions. Listens on 5672 (AMQP, what the .NET SDK
+  # uses with UseDevelopmentEmulator=true) and 5300 (HTTP management).
+  # ---------------------------------------------------------------------------
+  sb-emulator:
+    image: mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
+    container_name: ailib-sb-emulator
+    restart: unless-stopped
+    depends_on:
+      sb-emulator-db:
+        condition: service_healthy
+    environment:
+      ACCEPT_EULA: "Y"
+      SQL_SERVER: sb-emulator-db
+      MSSQL_SA_PASSWORD: "SbEmulator-LocalDev-Pwd-2026!"
+    volumes:
+      - ./deploy/sb-emulator-config.json:/ServiceBus_Emulator/ConfigFiles/Config.json:ro
+    ports:
+      - "5672:5672"
+      - "5300:5300"
+    healthcheck:
+      # The emulator exposes 5672 (AMQP) once it's ready to accept
+      # connections. nc TCP probe is the lowest-dependency check.
+      test: ["CMD-SHELL", "nc -z localhost 5672 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # IngestWorker -- the .NET background service that consumes from
+  # `ingest-jobs`, downloads the blob, runs the skill pipeline, and
+  # persists chunks + audit rows to Postgres.
+  # ---------------------------------------------------------------------------
+  ingest-worker:
+    build:
+      context: .
+      dockerfile: src/AiLibrarian.IngestWorker/Dockerfile
+    container_name: ailib-ingest-worker
+    restart: unless-stopped
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+      azurite:
+        condition: service_healthy
+      sb-emulator:
+        condition: service_healthy
+    environment:
+      DOTNET_ENVIRONMENT: Development
+      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=ailibrarian;Username=ailibrarian;Password=ailibrarian_dev"
+      # Worker's own namespace for queue + blob (see
+      # src/AiLibrarian.IngestWorker/appsettings.json for the schema).
+      IngestWorker__ServiceBus__ConnectionString: "Endpoint=sb://sb-emulator;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true"
+      IngestWorker__ServiceBus__IngestQueueName: "ingest-jobs"
+      IngestWorker__Blob__ConnectionString: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEYmQOFKnX3KZkqx6E6F9/V0WoTpfDqInQjsXVgmH6PMrJVF3qqXkAEcA==;BlobEndpoint=http://azurite:10000/devstoreaccount1;"
+      IngestWorker__Blob__UseManagedIdentity: "false"
+      # Pipeline knobs: content extraction on, embeddings off (no LLM
+      # in this profile -- pair with docker-compose.llm-mock.yml if
+      # you want embeddings during ingest too).
+      IngestWorker__Processing__RunContentPipeline: "true"
+      IngestWorker__Processing__GenerateEmbeddings: "false"
+
+  # ---------------------------------------------------------------------------
+  # Override api's env vars so the upload endpoint can enqueue + write
+  # blobs. Compose merges this on top of the base file's `api` service.
+  # ---------------------------------------------------------------------------
+  api:
+    environment:
+      IngestQueue__ConnectionString: "Endpoint=sb://sb-emulator;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true"
+      IngestQueue__QueueName: "ingest-jobs"
+      BlobStorage__ConnectionString: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEYmQOFKnX3KZkqx6E6F9/V0WoTpfDqInQjsXVgmH6PMrJVF3qqXkAEcA==;BlobEndpoint=http://azurite:10000/devstoreaccount1;"
+      BlobStorage__ContainerName: "sources"
+      # Enable the dev-mode upload escape hatch in api Program.cs.
+      # Anonymous requests can pass `contributorId` as a form field
+      # and the api grants Contributor-on-target-dept for that user.
+      # Required for the smoke script -- there's no Entra in compose,
+      # so we have no real ClaimsPrincipal to derive identity from.
+      Portal__DevelopmentRlsOverrideEnabled: "true"
+      ASPNETCORE_ENVIRONMENT: "Development"
+    depends_on:
+      # Compose merges depends_on by union. The api now needs Azurite
+      # + the SB emulator (in addition to migrations from the base file)
+      # before it should accept upload traffic.
+      migrations:
+        condition: service_completed_successfully
+      azurite:
+        condition: service_healthy
+      sb-emulator:
+        condition: service_healthy
+
+volumes:
+  azurite-data:
+    name: ailib-azurite-data
