@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -68,27 +69,46 @@ static async Task<IResult> Embed(string deployment, HttpRequest req, ILogger<Pro
 		return Results.BadRequest(new { error = "`input` field is required (string or string[])." });
 	}
 
-	var data = new List<EmbeddingData>(inputs.Length);
+	// OpenAI v1 + Azure OpenAI both accept an optional `encoding_format`
+	// of "float" (JSON array, default) or "base64" (little-endian float32
+	// bytes, base64-encoded). The .NET OpenAI SDK uses base64 for
+	// perf -- returning a JSON array there fails with a Base64
+	// decode error. Honor the requested format so both shapes work.
+	var encodingFormat = root.TryGetProperty("encoding_format", out var fmtElem)
+		? fmtElem.GetString() ?? "float"
+		: "float";
+
+	var data = new List<object>(inputs.Length);
 	var promptTokens = 0;
 	for (var i = 0; i < inputs.Length; i++)
 	{
 		var vec = DeterministicEmbedding(inputs[i], VectorDimensions);
-		data.Add(new EmbeddingData(Object: "embedding", Embedding: vec, Index: i));
+		object embeddingPayload = string.Equals(encodingFormat, "base64", StringComparison.OrdinalIgnoreCase)
+			? EncodeAsBase64(vec)
+			: vec;
+		data.Add(new
+		{
+			@object = "embedding",
+			embedding = embeddingPayload,
+			index = i,
+		});
 		// Trivial token estimate, matching the API's own approximation
 		// (chars/4, at least 1). Keeps the usage figure plausible without
 		// pulling in a tokenizer.
 		promptTokens += Math.Max(1, inputs[i].Length / 4);
 	}
 
-	var response = new EmbeddingsResponse(
-		Object: "list",
-		Data: data,
-		Model: DefaultModel,
-		Usage: new EmbeddingsUsage(PromptTokens: promptTokens, TotalTokens: promptTokens));
+	var response = new
+	{
+		@object = "list",
+		data,
+		model = DefaultModel,
+		usage = new EmbeddingsUsage(PromptTokens: promptTokens, TotalTokens: promptTokens),
+	};
 
 	logger.LogInformation(
-		"embeddings deployment={Deployment} inputs={Count} dims={Dims}",
-		deployment, inputs.Length, VectorDimensions);
+		"embeddings deployment={Deployment} inputs={Count} dims={Dims} encoding={Encoding}",
+		deployment, inputs.Length, VectorDimensions, encodingFormat);
 
 	return Results.Json(response, MockJsonOptions.Default);
 }
@@ -134,6 +154,21 @@ static string[] ExtractInputs(JsonElement inputElem)
 	}
 
 	return Array.Empty<string>();
+}
+
+// Encode a float[] as base64 of its little-endian float32 byte
+// representation -- the wire format the OpenAI/Azure-OpenAI APIs use
+// when the client requests encoding_format=base64.
+//
+// .NET float is IEEE-754 single-precision and stored in
+// host-endian order, which is little-endian on x64 / ARM64 / WSL /
+// the GitHub Actions Ubuntu runners we ship CI on. If we ever run on
+// a big-endian platform the byte order would flip and clients would
+// see scrambled vectors; for the mock we accept the trade-off.
+static string EncodeAsBase64(float[] vec)
+{
+	var bytes = MemoryMarshal.AsBytes(vec.AsSpan()).ToArray();
+	return Convert.ToBase64String(bytes);
 }
 
 static float[] DeterministicEmbedding(string input, int dims)
