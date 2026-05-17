@@ -120,42 +120,70 @@ docker compose logs postgres   # Postgres logs (pg_isready healthcheck failures 
 docker exec -it ailib-postgres psql -U ailibrarian -d ailibrarian
 ```
 
-## Phase 2B — deterministic LLM mock (now shipped)
+## Phase 2B — deterministic LLM mock (v1 shipped, CI gate deferred)
 
-The Phase 2B mock landed. `src/AiLibrarian.LlmMock/` ships a small
-ASP.NET Core service that mimics Azure OpenAI's
+The Phase 2B mock landed as a *manually-runnable* dev tool.
+`src/AiLibrarian.LlmMock/` ships a small ASP.NET Core service that
+mimics Azure OpenAI's
 `/openai/deployments/{deployment}/embeddings` endpoint with hash-seeded
-1536-dim vectors. Same input → same vector across runs, which is the
-property that lets the eval harness produce reproducible retrieval
-rankings without paying for real LLM calls.
+1536-dim vectors. Same input → same vector across runs.
 
-Bring it up as a compose override:
+Bring it up locally as a compose override:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.llm-mock.yml \
   up -d --build postgres migrations api llm-mock
 ```
 
-Then `/api/search/hybrid` returns **200 with a `hits[]` envelope**
-instead of the 503 the no-mock smoke covers. The
-`scripts/live-smoke-llm.sh` script seeds a minimal department + user +
-source + chunk and exercises the gate; same shape as
-`scripts/live-smoke.sh` but for the LLM-on path.
+`docker-compose.llm-mock.yml` injects six `LlmGateway:Providers:azure-openai:*`
+env vars on the `api` service that flip the provider to Enabled +
+point it at `http://llm-mock:8080`. The `LlmKernelFactory`
+(`src/AiLibrarian.LlmGateway/Internal/LlmKernelFactory.cs`) detects the
+`http://` scheme on the endpoint and routes through the **OpenAI**
+client (not AzureOpenAI), which accepts a custom `HttpClient` with
+`BaseAddress` — sidestepping the SDK's hard https-only check on the
+AzureOpenAI client.
 
-**What the mock is NOT:**
+**`/api/search/hybrid` returns 200 with a `hits[]` envelope when the
+mock is active**, instead of the 503 the no-mock workflow covers.
 
-- It doesn't preserve semantic similarity (random hashes don't),
-  so retrieval ranking is meaningless against a real corpus. Good
-  for "plumbing works"; not for "retrieval finds the right chunks".
+### What's NOT in v1 (Phase 2B-v2 follow-up)
+
+A CI workflow that auto-runs the with-mock smoke on every PR was
+removed before this slice merged because the SK OpenAI client's
+base64-encoded-embedding response parser kept rejecting our mock's
+output despite the bytes being valid base64. After 7 CI iterations
+trying response-shape variations the issue was scoped down to
+**something about how System.Text.Json serializes anonymous-typed
+properties of `object` runtime type when the client uses
+`JsonElement.GetBytesFromBase64()` on the receiving side**. The
+fix likely involves either:
+
+1. Returning a concrete typed record from the mock instead of an
+   anonymous type with `object` properties; OR
+2. Bypassing the SK OpenAI client entirely and writing a small
+   `IEmbeddingProvider` implementation that talks to the mock with
+   our own response shape — pulling the SK-OpenAI-SDK dance out of
+   the loop.
+
+Either is straightforward, but the slice closing the gate is its own
+PR. Until then, the mock is exercised manually for development; the
+no-mock Live Smoke + the live calibration workflow + the deployed
+pilot's smoke continue to gate the rest.
+
+### What the mock is NOT
+
+- It doesn't preserve semantic similarity (random hashes don't), so
+  retrieval ranking is meaningless against a real corpus. Good for
+  "plumbing works"; not for "retrieval finds the right chunks".
 - It only implements the embeddings endpoint. `/api/ask` (which
-  needs chat completions) still 503s. Extending to chat is a
-  follow-up.
+  needs chat completions) still 503s against the mock.
 
 **For real retrieval quality testing**, point `HttpEvalBackend`
 (`tests/AiLibrarian.Eval/Runner/HttpEvalBackend.cs`) at a deployed API
 wired to real Azure OpenAI. The mock + the cloud-deployed API are
-complementary: mock proves the gateway plumbing on every PR; real
-Azure OpenAI proves the retrieval/synthesis quality on a schedule.
+complementary: mock proves the gateway plumbing locally; real Azure
+OpenAI proves the retrieval/synthesis quality on a schedule.
 
 ## Known limitations (Phase A)
 

@@ -106,19 +106,11 @@ static async Task<IResult> Embed(string deployment, HttpRequest req, ILogger<Pro
 		usage = new EmbeddingsUsage(PromptTokens: promptTokens, TotalTokens: promptTokens),
 	};
 
-	// Diagnostic: serialize ourselves so we can log the actual bytes
-	// going on the wire. The 8th CI iteration of this mock kept failing
-	// with "input is not a valid Base64 string of encoded floats" on
-	// the OpenAI client side, despite the mock log saying it produced
-	// base64 -- this dumps the response so future regressions are
-	// attributable. Logged at Debug so production wouldn't see it.
-	var bytes = JsonSerializer.SerializeToUtf8Bytes(response, MockJsonOptions.Default);
-	var preview = Encoding.UTF8.GetString(bytes, 0, Math.Min(200, bytes.Length));
 	logger.LogInformation(
-		"embeddings deployment={Deployment} inputs={Count} dims={Dims} encoding={Encoding} bytes={Bytes} preview={Preview}",
-		deployment, inputs.Length, VectorDimensions, encodingFormat, bytes.Length, preview);
+		"embeddings deployment={Deployment} inputs={Count} dims={Dims} encoding={Encoding}",
+		deployment, inputs.Length, VectorDimensions, encodingFormat);
 
-	return Results.Bytes(bytes, "application/json");
+	return Results.Json(response, MockJsonOptions.Default);
 }
 
 // Register the handler on both Azure-OpenAI-shaped and OpenAI-shaped
