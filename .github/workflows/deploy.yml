@@ -1,0 +1,174 @@
+name: Deploy (pilot)
+
+# Hands-free deploy to the pilot Azure environment via OIDC federated
+# identity (no long-lived secrets in GitHub). Triggers on push to main
+# AND manual workflow_dispatch (for re-deploying without a code
+# change).
+#
+# What the workflow does:
+#   1. Authenticate to Azure via OIDC -- no secrets, just a federated
+#      credential on an Entra app registration scoped to this repo's
+#      `main` branch.
+#   2. `az deployment group create` against the pilot RG using
+#      `pilot-cloud.bicepparam` -- same shape as the manual runbook.
+#      The image refs default to `ghcr.io/<owner>/ailib-{api,ingest,
+#      portal}:main` which the Release Images workflow keeps current.
+#   3. Wait for Postgres to be Ready (the ServerIsBusy retry gate
+#      from the runbook, automated).
+#   4. Run Liquibase migrations against the deployed Postgres.
+#   5. Verify the API came up + audit-writer circuit is Closed.
+#
+# What this workflow does NOT do (deferred):
+#   - Wire connection strings via `az containerapp update --set-env-vars`.
+#     That step is hardcoded in docs/dev/deploy-pilot-cloud.md step 6
+#     and could be added here as a follow-up; for now the first deploy
+#     still needs that manual one-time pass. Subsequent re-deploys of
+#     the same image refs don't re-need it.
+#   - Promote across environments (stage/prod). This pilot path is
+#     single-RG; multi-environment promotion is a future slice.
+#
+# OIDC setup (one-time, see docs/dev/deploy-pilot-cloud.md "Federated
+# identity setup" section):
+#   az ad app create --display-name 'gha-ailib-deploy'
+#   az ad sp create --id <appId>
+#   az role assignment create --assignee <appId> --role Contributor \
+#     --scope /subscriptions/<sub>/resourceGroups/rg-ailib-pilot
+#   az ad app federated-credential create --id <appId> --parameters '{
+#     "name":"gha-main",
+#     "issuer":"https://token.actions.githubusercontent.com",
+#     "subject":"repo:aaronpeterson-franconnect/AI-Librarian:ref:refs/heads/main",
+#     "audiences":["api://AzureADTokenExchange"]
+#   }'
+# Then set repo secrets: AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Image tag to deploy (default: main = latest)'
+        required: false
+        default: 'main'
+
+# OIDC requires `id-token: write` so GitHub Actions can mint a JWT
+# that Entra will trade for an access token. `contents: read` is the
+# minimum for actions/checkout to fetch the repo.
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Gate the whole workflow on the secrets existing so a fork or a
+    # repo without the setup completed doesn't try to push to Azure.
+    if: github.repository == 'aaronpeterson-franconnect/AI-Librarian'
+    environment: pilot   # GitHub Environment with the OIDC secrets
+    timeout-minutes: 30
+
+    env:
+      RG: rg-ailib-pilot
+      PG_SERVER: psql-ailib-m6qkpprvilb52
+      GHCR_OWNER: aaronpeterson-franconnect
+      IMAGE_TAG: ${{ inputs.image_tag || 'main' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Wait for Postgres to be Ready
+        # The ServerIsBusy retry gate from the runbook, automated.
+        # Bicep's `azure.extensions` configuration update can collide
+        # with in-progress server work; poll until state=Ready before
+        # the deploy.
+        run: |
+          for i in {1..30}; do
+            STATE=$(az postgres flexible-server show \
+              -g "$RG" -n "$PG_SERVER" \
+              --query state -o tsv 2>/dev/null || echo "Unknown")
+            echo "Postgres state: $STATE (attempt $i/30)"
+            if [ "$STATE" = "Ready" ]; then exit 0; fi
+            sleep 10
+          done
+          echo "::error::Postgres never became Ready"; exit 1
+
+      - name: Deploy Bicep (idempotent against current data plane)
+        # Same shape as docs/dev/deploy-pilot-cloud.md step 5b but
+        # automated. Passes the API FQDN as portalApiBaseUrl via the
+        # known compose-network domain pattern; Bicep is idempotent
+        # so even if the FQDN matches what's already deployed, no
+        # change happens.
+        run: |
+          API_FQDN="ca-api-m6qkpprvilb52.livelyfield-6e7ceceb.eastus2.azurecontainerapps.io"
+
+          az deployment group create \
+            --resource-group "$RG" \
+            --template-file deploy/bicep/main.bicep \
+            --parameters deploy/bicep/parameters/pilot-cloud.bicepparam \
+            --parameters deployApiContainerApp=true \
+            --parameters apiContainerImage="ghcr.io/${GHCR_OWNER}/ailib-api:${IMAGE_TAG}" \
+            --parameters deployIngestWorkerContainerApp=true \
+            --parameters ingestWorkerContainerImage="ghcr.io/${GHCR_OWNER}/ailib-ingest:${IMAGE_TAG}" \
+            --parameters deployPortalContainerApp=true \
+            --parameters portalContainerImage="ghcr.io/${GHCR_OWNER}/ailib-portal:${IMAGE_TAG}" \
+            --parameters portalApiBaseUrl="https://${API_FQDN}"
+
+      - name: Run Liquibase migrations
+        # Same docker-run pattern the manual runbook uses. The
+        # AILIB_PG_ADMIN_PASSWORD env var is supplied as a GitHub
+        # secret (paired with the OIDC client-id at setup time).
+        # Postgres password rotation needs to be paired with this
+        # secret update; see the runbook's password section.
+        env:
+          AILIB_PG_ADMIN_PASSWORD: ${{ secrets.AILIB_PG_ADMIN_PASSWORD }}
+        run: |
+          PG_FQDN="${PG_SERVER}.postgres.database.azure.com"
+          docker run --rm \
+            -v "${PWD}/db/changelog:/liquibase/changelog" \
+            liquibase/liquibase:4.29 \
+            --url="jdbc:postgresql://${PG_FQDN}:5432/ailibrarian?sslmode=require" \
+            --username="ailibrarian" \
+            --password="$AILIB_PG_ADMIN_PASSWORD" \
+            --changeLogFile="changelog/master.xml" \
+            update
+
+      - name: Smoke /health
+        # 30s grace for the Container App revision to roll forward
+        # with whatever the deploy step changed (image tag, env vars).
+        # Then assert /health audit-writer circuit is Closed.
+        run: |
+          API_FQDN="ca-api-m6qkpprvilb52.livelyfield-6e7ceceb.eastus2.azurecontainerapps.io"
+          sleep 30
+
+          for i in {1..20}; do
+            BODY=$(curl -sf "https://${API_FQDN}/health" || true)
+            echo "/health attempt $i: $BODY"
+            if echo "$BODY" | grep -q '"circuitState":"Closed"'; then
+              echo "Audit-writer circuit Closed -- deploy successful."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::/health never returned circuitState=Closed"; exit 1
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Deploy summary"
+            echo ""
+            echo "- Image tag: \`${IMAGE_TAG}\`"
+            echo "- Resource group: \`${RG}\`"
+            echo "- Status: ${{ job.status }}"
+            echo ""
+            echo "### URLs"
+            echo "- API: https://ca-api-m6qkpprvilb52.livelyfield-6e7ceceb.eastus2.azurecontainerapps.io"
+            echo "- Portal: https://ca-portal-m6qkpprvilb52.livelyfield-6e7ceceb.eastus2.azurecontainerapps.io"
+          } >> "$GITHUB_STEP_SUMMARY"
