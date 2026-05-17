@@ -120,31 +120,70 @@ docker compose logs postgres   # Postgres logs (pg_isready healthcheck failures 
 docker exec -it ailib-postgres psql -U ailibrarian -d ailibrarian
 ```
 
-## Phase 2B — deterministic LLM mock for full retrieval smoke
+## Phase 2B — deterministic LLM mock (v1 shipped, CI gate deferred)
 
-The current Live Smoke workflow exercises Postgres-only endpoints
-(`/health`, `/api/departments`, `/api/audit/recent`) plus the
-documented 503 contract for `/api/search/hybrid` when no LLM is
-configured. It does NOT catch regressions inside the retrieval or
-synthesis pipeline because those need an embedding/chat provider.
+The Phase 2B mock landed as a *manually-runnable* dev tool.
+`src/AiLibrarian.LlmMock/` ships a small ASP.NET Core service that
+mimics Azure OpenAI's
+`/openai/deployments/{deployment}/embeddings` endpoint with hash-seeded
+1536-dim vectors. Same input → same vector across runs.
 
-Two options to add real-retrieval coverage:
+Bring it up locally as a compose override:
 
-1. **GitHub secrets + Azure OpenAI** — schedule a nightly workflow
-   that pulls keys from `${{ secrets.AZURE_OPENAI_* }}` and wires
-   them through `env_file:` into the compose api service. Burns
-   real tokens (~$0.50/run for the 5-case corpus) and only runs on
-   trusted contexts (won't fire on forked-PR runs).
-2. **Deterministic embedding mock** — a tiny service in compose
-   that responds to `POST /openai/deployments/*/embeddings` with a
-   hash-seeded float vector. The API can't tell it's not Azure
-   OpenAI; pgvector cosine-similarity stays meaningful because the
-   same input produces the same vector. Zero LLM cost, runs on
-   every PR including forks.
+```bash
+docker compose -f docker-compose.yml -f docker-compose.llm-mock.yml \
+  up -d --build postgres migrations api llm-mock
+```
 
-Recommend (2) for the every-PR signal and (1) as a nightly tripwire
-that confirms the real provider hasn't drifted. Tracked as Phase 2B
-of the docker-compose dev-stack work.
+`docker-compose.llm-mock.yml` injects six `LlmGateway:Providers:azure-openai:*`
+env vars on the `api` service that flip the provider to Enabled +
+point it at `http://llm-mock:8080`. The `LlmKernelFactory`
+(`src/AiLibrarian.LlmGateway/Internal/LlmKernelFactory.cs`) detects the
+`http://` scheme on the endpoint and routes through the **OpenAI**
+client (not AzureOpenAI), which accepts a custom `HttpClient` with
+`BaseAddress` — sidestepping the SDK's hard https-only check on the
+AzureOpenAI client.
+
+**`/api/search/hybrid` returns 200 with a `hits[]` envelope when the
+mock is active**, instead of the 503 the no-mock workflow covers.
+
+### What's NOT in v1 (Phase 2B-v2 follow-up)
+
+A CI workflow that auto-runs the with-mock smoke on every PR was
+removed before this slice merged because the SK OpenAI client's
+base64-encoded-embedding response parser kept rejecting our mock's
+output despite the bytes being valid base64. After 7 CI iterations
+trying response-shape variations the issue was scoped down to
+**something about how System.Text.Json serializes anonymous-typed
+properties of `object` runtime type when the client uses
+`JsonElement.GetBytesFromBase64()` on the receiving side**. The
+fix likely involves either:
+
+1. Returning a concrete typed record from the mock instead of an
+   anonymous type with `object` properties; OR
+2. Bypassing the SK OpenAI client entirely and writing a small
+   `IEmbeddingProvider` implementation that talks to the mock with
+   our own response shape — pulling the SK-OpenAI-SDK dance out of
+   the loop.
+
+Either is straightforward, but the slice closing the gate is its own
+PR. Until then, the mock is exercised manually for development; the
+no-mock Live Smoke + the live calibration workflow + the deployed
+pilot's smoke continue to gate the rest.
+
+### What the mock is NOT
+
+- It doesn't preserve semantic similarity (random hashes don't), so
+  retrieval ranking is meaningless against a real corpus. Good for
+  "plumbing works"; not for "retrieval finds the right chunks".
+- It only implements the embeddings endpoint. `/api/ask` (which
+  needs chat completions) still 503s against the mock.
+
+**For real retrieval quality testing**, point `HttpEvalBackend`
+(`tests/AiLibrarian.Eval/Runner/HttpEvalBackend.cs`) at a deployed API
+wired to real Azure OpenAI. The mock + the cloud-deployed API are
+complementary: mock proves the gateway plumbing locally; real Azure
+OpenAI proves the retrieval/synthesis quality on a schedule.
 
 ## Known limitations (Phase A)
 

@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+	<!--
+		Deterministic Azure OpenAI mock for the docker-compose dev stack.
+		Responds to /openai/deployments/{deployment}/embeddings with a
+		hash-seeded 1536-dim float vector. Same input -> same vector across
+		runs, which is what makes the eval harness's retrieval signals
+		reproducible without an Azure OpenAI subscription.
+
+		NOT a substitute for real LLMs:
+		Vectors are random uniform on a hash seed; semantic similarity
+		between two unrelated strings is essentially 0, and between two
+		related strings is also essentially 0 (random hashes don't
+		preserve meaning). Useful for "the LLM gateway plumbing works"
+		gating in CI, NOT for "retrieval finds the right chunks" quality
+		evaluation. For real retrieval evaluation, point HttpEvalBackend
+		at a deployed API wired to real Azure OpenAI.
+
+		Profile-gated in docker-compose.yml so the default `docker compose
+		up` does not start this service; preserves the 503-when-LLM-
+		unconfigured Live Smoke gate.
+	-->
+
+	<PropertyGroup>
+		<TargetFramework>net9.0</TargetFramework>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<IsPackable>false</IsPackable>
+		<RootNamespace>AiLibrarian.LlmMock</RootNamespace>
+	</PropertyGroup>
+
+</Project>
