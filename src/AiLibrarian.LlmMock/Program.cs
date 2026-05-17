@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -195,6 +196,19 @@ static float[] DeterministicEmbedding(string input, int dims)
 
 // JSON shapes -- camelCase to match Azure OpenAI's REST response.
 //
+// Encoder: JavaScriptEncoder.UnsafeRelaxedJsonEscaping. The "Default"
+// encoder escapes `+` and `/` as `+` / `/` in JSON string
+// values; base64 strings contain both characters freely. The OpenAI
+// .NET SDK's BinaryData-based base64 decoder operates on the raw JSON
+// bytes (not the JSON-decoded char string), so an escaped `+` becomes
+// a literal 6-byte `+` sequence that breaks
+// Convert.TryFromBase64String -- producing the "input is not a valid
+// Base64 string of encoded floats" exception. The Unsafe variant is
+// only "unsafe" if you embed the JSON in HTML (where < > & need to
+// stay escaped); we don't, so it's the right choice here. See
+// MockResponseRoundtripTests in AiLibrarian.LlmGateway.Tests for the
+// reproducer.
+//
 // Note: a `static readonly` field can't live at file scope in a
 // top-level program, so the options are held in a small static class.
 internal static class MockJsonOptions
@@ -202,6 +216,7 @@ internal static class MockJsonOptions
 	public static readonly JsonSerializerOptions Default = new(JsonSerializerDefaults.Web)
 	{
 		DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+		Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
 	};
 }
 
