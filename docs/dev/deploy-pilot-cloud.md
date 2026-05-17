@@ -353,6 +353,91 @@ If `/health` returns `audit.circuitState=Closed` and the Portal home
 renders, the data plane + audit + Postgres wiring are all green
 against Azure. Same proof shape as the local Live Smoke workflow.
 
+## Federated identity setup (for hands-free CI deploys)
+
+`.github/workflows/deploy.yml` deploys to this pilot RG on every push
+to `main`, but only after a one-time OIDC federated-credential setup.
+Without it, the workflow errors at `azure/login` with "no matching
+federated identity record". Run these once per repo:
+
+```powershell
+$SUB = '709205f3-3395-4dec-9bc9-3f55bc8ec770'
+$RG  = 'rg-ailib-pilot'
+$APP_NAME = 'gha-ailib-deploy'
+$REPO = 'aaronpeterson-franconnect/AI-Librarian'
+
+# 1. Create the app registration + service principal
+$APP_ID = az ad app create --display-name $APP_NAME --query appId -o tsv
+az ad sp create --id $APP_ID
+$SP_OID = az ad sp show --id $APP_ID --query id -o tsv
+
+# 2. Grant Contributor on the pilot RG (NOT subscription -- least
+#    privilege; the SP can only touch this one RG).
+az role assignment create `
+  --assignee $SP_OID `
+  --role Contributor `
+  --scope "/subscriptions/$SUB/resourceGroups/$RG"
+
+# 3. Federated credential: trust GitHub Actions tokens for pushes to
+#    main on this repo. Subject claim format is documented at
+#    https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/about-security-hardening-with-openid-connect
+az ad app federated-credential create --id $APP_ID --parameters @"
+{
+  "name": "gha-main",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "subject": "repo:$REPO`:ref:refs/heads/main",
+  "description": "GitHub Actions push to main",
+  "audiences": ["api://AzureADTokenExchange"]
+}
+"@
+
+# 4. (Optional but recommended) Add a second federated credential for
+#    the workflow_dispatch path -- triggers a deploy from the Actions
+#    UI without a code change. Same SP, different subject claim.
+az ad app federated-credential create --id $APP_ID --parameters @"
+{
+  "name": "gha-dispatch",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "subject": "repo:$REPO`:environment:pilot",
+  "description": "GitHub Actions workflow_dispatch via pilot environment",
+  "audiences": ["api://AzureADTokenExchange"]
+}
+"@
+
+# 5. Capture the IDs the workflow needs
+Write-Host "AZURE_CLIENT_ID:       $APP_ID"
+Write-Host "AZURE_TENANT_ID:       $(az account show --query tenantId -o tsv)"
+Write-Host "AZURE_SUBSCRIPTION_ID: $SUB"
+```
+
+Then add those three values as **GitHub repository secrets** (Settings
+→ Secrets and variables → Actions → New repository secret):
+
+| Secret | Value |
+|---|---|
+| `AZURE_CLIENT_ID` | `$APP_ID` from step 5 |
+| `AZURE_TENANT_ID` | tenant id from step 5 |
+| `AZURE_SUBSCRIPTION_ID` | `709205f3-3395-4dec-9bc9-3f55bc8ec770` |
+| `AILIB_PG_ADMIN_PASSWORD` | the same password you set in `$env:AILIB_PG_ADMIN_PASSWORD` for the manual deploy |
+
+The Liquibase step in the deploy workflow needs the Postgres admin
+password; it's a GitHub secret rather than pulling from Key Vault
+because (a) the slim-pilot identity-RBAC story isn't wired yet
+(`deployIdentityRbac=false`) and (b) rotating it via secret update +
+re-deploy is a simpler operator story than KV-rotation-then-Container-
+Apps-restart.
+
+Also create a **GitHub Environment** named `pilot`:
+1. Settings → Environments → New environment → `pilot`
+2. (Optional) Required reviewers: yourself, if you want a manual
+   "approve deploy" gate per workflow run.
+3. The workflow references this environment via `environment: pilot`,
+   which is also part of the federated credential's subject claim for
+   `workflow_dispatch`.
+
+Once setup is complete, the next push to `main` triggers a deploy.
+Watch progress via `gh run watch` or in the Actions tab.
+
 ## Tear down
 
 ```powershell
