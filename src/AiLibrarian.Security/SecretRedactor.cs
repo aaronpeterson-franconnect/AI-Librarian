@@ -12,7 +12,24 @@ namespace AiLibrarian.Security;
 /// </summary>
 public sealed class SecretRedactor
 {
-	private static readonly TimeSpan PatternTimeout = TimeSpan.FromMilliseconds(200);
+	// 1 second per pattern is the right budget after the
+	// 2026-05-17 flake investigation. The previous 200ms timeout
+	// produced CI-only failures because:
+	//   - 8 patterns run in parallel via Parallel.ForEach below.
+	//   - First call to .Matches() JIT-compiles the Compiled regex.
+	//     On a CI shared runner (vs developer hardware), the JIT cost
+	//     for some patterns -- particularly the multi-line PEM pattern
+	//     with `[\s\S]+?` -- exceeded 200ms.
+	//   - The catch (RegexMatchTimeoutException) below silently
+	//     swallows the timeout, returning "no matches" -- which a test
+	//     asserting "the credential sample SHOULD have produced a
+	//     match" then fails.
+	// 1 second is still tight enough to defend against catastrophic
+	// backtracking on adversarial input (the original concern); regex
+	// engines that aren't actively under attack complete in low ms.
+	// See AdversarialCorpusTests + AdversarialMetricsTests for the
+	// regression coverage.
+	private static readonly TimeSpan PatternTimeout = TimeSpan.FromSeconds(1);
 
 	// Order matters: more-specific patterns first so a JWT isn't also
 	// flagged as a generic API-key blob.
@@ -51,6 +68,27 @@ public sealed class SecretRedactor
 			@"\b(?:\d[ -]?){13,19}\b",
 			RegexOptions.Compiled, PatternTimeout)),
 	];
+
+	// Force every Compiled regex through its JIT path at type-load time
+	// so the first `Scan` call doesn't pay the cost. Without this, the
+	// PatternTimeout above has to absorb both the JIT cost AND the
+	// matching cost on a cold pattern -- the original flake source.
+	// Match("") is the cheapest possible input that still triggers
+	// compilation.
+	static SecretRedactor()
+	{
+		foreach (var (_, pattern) in Patterns)
+		{
+			try
+			{
+				pattern.Match(string.Empty);
+			}
+			catch (RegexMatchTimeoutException)
+			{
+				// Impossible on empty input; defensive only.
+			}
+		}
+	}
 
 	private readonly AskGuardOptions _options;
 
