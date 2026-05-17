@@ -438,6 +438,115 @@ Also create a **GitHub Environment** named `pilot`:
 Once setup is complete, the next push to `main` triggers a deploy.
 Watch progress via `gh run watch` or in the Actions tab.
 
+## Wiring Azure OpenAI to the pilot (Phase 3c)
+
+The pilot ships with `/api/search/hybrid` and `/api/ask` returning
+503 because no LLM provider is configured. To flip them on:
+
+### Prerequisites
+
+1. **Azure OpenAI quota.** File the request via the Azure portal:
+   Create resource → "Azure OpenAI" → fill out the quota form. Lead
+   time is 24-72h in `eastus2` (faster in some regions, slower in
+   others). The form asks about expected usage; "internal pilot,
+   <1M tokens/month" is honest and typically approved fast.
+
+2. **Provision the resource** once quota is approved:
+   ```powershell
+   az cognitiveservices account create `
+     --resource-group rg-ailib-pilot `
+     --name aoai-ailib-pilot `
+     --kind OpenAI `
+     --sku S0 `
+     --location eastus2
+   ```
+
+3. **Create two deployments** on the resource:
+   ```powershell
+   $AOAI = 'aoai-ailib-pilot'
+
+   az cognitiveservices account deployment create `
+     -g rg-ailib-pilot -n $AOAI `
+     --deployment-name gpt-4o-mini `
+     --model-name gpt-4o-mini --model-version '2024-07-18' --model-format OpenAI `
+     --sku-name Standard --sku-capacity 30
+
+   az cognitiveservices account deployment create `
+     -g rg-ailib-pilot -n $AOAI `
+     --deployment-name text-embedding-3-large `
+     --model-name text-embedding-3-large --model-version '1' --model-format OpenAI `
+     --sku-name Standard --sku-capacity 50
+   ```
+
+   `sku-capacity` is K TPM (thousands of tokens per minute); 30K for
+   the chat model + 50K for embeddings is light-pilot sizing.
+
+4. **Capture the endpoint + key:**
+   ```powershell
+   $ENDPOINT = az cognitiveservices account show -g rg-ailib-pilot -n $AOAI `
+     --query properties.endpoint -o tsv
+   $KEY = az cognitiveservices account keys list -g rg-ailib-pilot -n $AOAI `
+     --query key1 -o tsv
+   ```
+
+### Push the config to the deployed Container Apps
+
+```bash
+bash scripts/wire-azure-openai-to-pilot.sh \
+  --endpoint "$ENDPOINT" \
+  --api-key "$KEY" \
+  --chat-deployment gpt-4o-mini \
+  --embedding-deployment text-embedding-3-large
+```
+
+The script:
+- Looks up the API + Worker container-app names from Bicep outputs
+- Sets the 6 `LlmGateway__Providers__azure-openai__*` env vars on both
+- Triggers a new Container App revision for each (~30-60s rollout)
+
+After it completes, smoke:
+
+```powershell
+$API_FQDN = az deployment group show -g rg-ailib-pilot -n main `
+  --query 'properties.outputs.apiContainerAppFqdn.value' -o tsv
+
+# Should now return 200 with hits[] (or empty hits with real
+# correlationId + embeddingDeployment fields)
+curl.exe -X POST "https://$API_FQDN/api/search/hybrid" `
+  -H 'Content-Type: application/json' `
+  -d '{\"query\":\"first real embedding\"}'
+
+# And /api/ask should return a real synthesis (or a no-sources refusal
+# if the corpus is empty -- either is a 200, NOT 503)
+curl.exe -X POST "https://$API_FQDN/api/ask" `
+  -H 'Content-Type: application/json' `
+  -d '{\"query\":\"what does this system do?\"}'
+```
+
+### Key rotation
+
+The Azure OpenAI key briefly lives in your shell history during the
+wire-up. Rotate within a day or two:
+
+1. Azure portal → AOAI resource → Keys and Endpoint → **Regenerate Key1**
+2. Capture the new value via `az cognitiveservices account keys list`
+3. Re-run `wire-azure-openai-to-pilot.sh` with the new key
+4. Verify smoke still passes
+
+Container Apps revisions handle the swap with zero downtime — the old
+revision drains while the new one (with the new key) takes traffic.
+
+### Cost expectation
+
+Azure OpenAI charges per token:
+- `gpt-4o-mini`: ~$0.15 / 1M input tokens, $0.60 / 1M output
+- `text-embedding-3-large`: ~$0.13 / 1M input tokens
+
+For a pilot with ~10 users doing ~50 queries/day, ~250 tokens/query,
+3 tokens-out-per-token-in: roughly **$2-5/month for the LLM portion**.
+Easy to monitor via the Azure portal's cost-analysis on the AOAI
+resource.
+
 ## Tear down
 
 ```powershell
