@@ -2,7 +2,7 @@
 	"UserConfig": {
 		"Namespaces": [
 			{
-				"Name": "ailib-emulator",
+				"Name": "sbemulatorns",
 				"Queues": [
 					{
 						"Name": "ingest-jobs",

@@ -53,13 +53,13 @@ services:
       - azurite-data:/workspace
     ports:
       - "10000:10000"
-    healthcheck:
-      # Azurite has no /health endpoint; a simple TCP probe is enough
-      # to gate dependent services on "blob socket accepting connections".
-      test: ["CMD-SHELL", "nc -z localhost 10000 || exit 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
+    # No healthcheck on Azurite: the image is Alpine-Node with busybox
+    # netcat, which doesn't support the `-z` zero-data flag standard
+    # tools use. There's also no curl/wget in the image. Azurite is
+    # fast enough that dependents using `service_started` (instead of
+    # `service_healthy`) is fine -- the smoke script's own
+    # readiness-wait loop catches the rare case where api comes up
+    # before Azurite is fully ready.
 
   # ---------------------------------------------------------------------------
   # SQL Server Edge -- the SB emulator's state backend. Listens only
@@ -131,7 +131,7 @@ services:
       migrations:
         condition: service_completed_successfully
       azurite:
-        condition: service_healthy
+        condition: service_started
       sb-emulator:
         condition: service_healthy
     environment:
@@ -173,7 +173,7 @@ services:
       migrations:
         condition: service_completed_successfully
       azurite:
-        condition: service_healthy
+        condition: service_started
       sb-emulator:
         condition: service_healthy
 
