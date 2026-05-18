@@ -107,14 +107,11 @@ services:
     ports:
       - "5672:5672"
       - "5300:5300"
-    healthcheck:
-      # The emulator exposes 5672 (AMQP) once it's ready to accept
-      # connections. nc TCP probe is the lowest-dependency check.
-      test: ["CMD-SHELL", "nc -z localhost 5672 || exit 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
-      start_period: 30s
+    # No healthcheck: the SB emulator image is CBL-Mariner without
+    # `nc -z`, curl, or wget. The smoke script's own wait-for-API
+    # loop catches "emulator not ready" via real traffic instead.
+    # The container's own startup log line `Emulator Service is
+    # Successfully Up!` is the actual ready signal.
 
   # ---------------------------------------------------------------------------
   # IngestWorker -- the .NET background service that consumes from
@@ -133,7 +130,7 @@ services:
       azurite:
         condition: service_started
       sb-emulator:
-        condition: service_healthy
+        condition: service_started
     environment:
       DOTNET_ENVIRONMENT: Development
       ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=ailibrarian;Username=ailibrarian;Password=ailibrarian_dev"
@@ -175,7 +172,7 @@ services:
       azurite:
         condition: service_started
       sb-emulator:
-        condition: service_healthy
+        condition: service_started
 
 volumes:
   azurite-data:
