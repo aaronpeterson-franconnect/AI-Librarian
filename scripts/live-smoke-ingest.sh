@@ -65,28 +65,12 @@ SELECT count(*) AS user_rows  FROM users       WHERE id = '${CONTRIBUTOR_ID}';
 SQL
 pass "department + contributor seeded"
 
-echo "=== Pre-step: settle delay (api may be up but Azurite/SB lazy-init pending) ==="
-# The api's BlobUploadService runs CreateIfNotExistsAsync on the
-# `sources` container at first upload; the ServiceBusClient connects
-# lazily on first publish. If Azurite or SB aren't fully ready when
-# /health passes, the first upload races them. 15s settle covers the
-# slow path. Local: usually unnecessary; CI: catches the race.
+# Brief settle so the api's lazy BlobServiceClient + ServiceBusClient
+# have a fresh emulator to talk to. Both connect on first call; both
+# emulators take a few seconds after /health is reachable. 15s is
+# more generous than necessary in steady-state but catches the cold
+# CI startup race.
 sleep 15
-
-# Also probe SB emulator's management API (port 5300) so we know
-# whether to even attempt an upload. Returns 200 once the namespace
-# is provisioned in SQL Edge.
-SB_READY=0
-for i in $(seq 1 20); do
-	if docker exec ailib-api curl -sf "http://sb-emulator:5300/health/status" -o /dev/null 2>/dev/null \
-		|| curl -sf "http://localhost:5300/health/status" -o /dev/null 2>/dev/null; then
-		SB_READY=1
-		break
-	fi
-	echo "  sb-emulator readiness probe $i/20..."
-	sleep 3
-done
-[ "${SB_READY}" = "1" ] && pass "sb-emulator HTTP management is up" || echo "  WARN: sb-emulator HTTP probe never returned 200; upload may still work if AMQP is up"
 
 echo "=== STEP 2: upload a sample markdown file via /api/portal/sources/upload ==="
 # Sample content the Markdown skill will chunk. ~200 chars so we get

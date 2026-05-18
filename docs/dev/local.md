@@ -120,9 +120,10 @@ docker compose logs postgres   # Postgres logs (pg_isready healthcheck failures 
 docker exec -it ailib-postgres psql -U ailibrarian -d ailibrarian
 ```
 
-## Phase B — full ingest pipeline (Azurite + SB emulator + IngestWorker)
+## Phase B — full ingest pipeline (Azurite + SB emulator + IngestWorker) — v1 manually runnable
 
-Bring up the full upload→ingest round-trip locally:
+`docker-compose.ingest.yml` brings up the full upload→ingest round-trip
+locally with Microsoft's official emulators (no Azure resources):
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.ingest.yml \
@@ -130,20 +131,46 @@ docker compose -f docker-compose.yml -f docker-compose.ingest.yml \
 bash scripts/live-smoke-ingest.sh
 ```
 
-`docker-compose.ingest.yml` adds four services to the stack:
+What this adds to the stack:
 
 - **`azurite`** — Microsoft's official Azure Storage emulator (blob only). Port `10000` (host) / `10000` (container). Uses the well-known dev-mode account `devstoreaccount1` documented in the Azurite README.
-- **`sb-emulator-db`** — SQL Server Edge that the Service Bus emulator stores state in. No host port; internal-only.
-- **`sb-emulator`** — Microsoft's official Service Bus emulator. Ports `5672` (AMQP) and `5300` (HTTP management). Pre-configured via `deploy/sb-emulator-config.json` with a single queue named `ingest-jobs`.
+- **`sb-emulator-db`** — SQL Server Edge (`mcr.microsoft.com/azure-sql-edge`) that the Service Bus emulator stores state in. No host port; internal-only.
+- **`sb-emulator`** — Microsoft's official Service Bus emulator. Ports `5672` (AMQP) and `5300` (HTTP management). Pre-configured via `deploy/sb-emulator-config.json` with namespace `sbemulatorns` (the emulator's hard-coded value; non-modifiable) and a single queue `ingest-jobs`.
 - **`ingest-worker`** — the `AiLibrarian.IngestWorker` .NET service, wired to all three.
 
 The override also injects env vars into the `api` service so
-`/api/portal/sources/upload` returns 200 (instead of 503).
+`/api/portal/sources/upload` is wired to the local Azurite + SB.
 
-`scripts/live-smoke-ingest.sh` round-trips a markdown file through
-the full pipeline and asserts the chunk lands in `source_chunks`
-with matching content. CI runs the same script via
-`.github/workflows/live-smoke-ingest.yml`.
+### Phase B v2 follow-up (CI gate deferred)
+
+The CI workflow for this round-trip was attempted but pulled out of
+this slice. The smoke kept failing at the upload step with an Azure
+Storage SDK error: `"No valid combination of account information
+found."` — the SDK rejecting the Azurite connection string despite
+the string being valid and well-known. The diagnostic chase consumed
+several CI iterations without root-cause. Suspects:
+
+- YAML / docker-compose env-var encoding mangling some part of the
+  `AccountKey` (it contains `+`/`/`/`==` base64 padding) before it
+  reaches the API process.
+- The lazy-init order between `BlobServiceClient` connecting and
+  `ServiceBusClient` connecting, where one's failure short-circuits
+  the other.
+- An `EndpointSuffix=` field the SDK requires when both
+  `DefaultEndpointsProtocol` AND `BlobEndpoint` are set.
+
+Each of these is faster to diagnose with Docker Desktop running
+locally (sub-second iteration) than via CI cycles (~5 min per push).
+The v2 slice should:
+
+1. Bring the stack up locally
+2. Reproduce the 502
+3. Find the bad arg via `docker exec ailib-api env | grep BlobStorage`
+4. Add the regression test
+5. Re-add `.github/workflows/live-smoke-ingest.yml`
+
+The infrastructure (compose, queue config, smoke script) all stay in
+this v1 commit; only the auto-CI piece moves to v2.
 
 ### Layering with the LLM-mock profile
 
