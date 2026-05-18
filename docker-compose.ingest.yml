@@ -138,7 +138,17 @@ services:
       # src/AiLibrarian.IngestWorker/appsettings.json for the schema).
       IngestWorker__ServiceBus__ConnectionString: "Endpoint=sb://sb-emulator;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true"
       IngestWorker__ServiceBus__IngestQueueName: "ingest-jobs"
-      IngestWorker__Blob__ConnectionString: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEYmQOFKnX3KZkqx6E6F9/V0WoTpfDqInQjsXVgmH6PMrJVF3qqXkAEcA==;BlobEndpoint=http://azurite:10000/devstoreaccount1;"
+      # Azurite connection string: the documented
+      # `DefaultEndpointsProtocol=http;AccountName=...;AccountKey=...;
+      # BlobEndpoint=http://azurite:10000/devstoreaccount1;` form is
+      # REJECTED by Azure.Storage.Blobs 12.22.2 with "No valid
+      # combination of account information found." This appears to be
+      # a regression / quirk in the SDK's connection-string parser.
+      # The shorthand form below works (verified via isolated test in
+      # a clean SDK container -- BlobServiceClient ctor succeeds and
+      # UploadAsync round-trips a file). The Uri the SDK builds is
+      # http://azurite:10000/devstoreaccount1/<container>/<blob>.
+      IngestWorker__Blob__ConnectionString: "UseDevelopmentStorage=true;DevelopmentStorageProxyUri=http://azurite"
       IngestWorker__Blob__UseManagedIdentity: "false"
       # Pipeline knobs: content extraction on, embeddings off (no LLM
       # in this profile -- pair with docker-compose.llm-mock.yml if
@@ -154,7 +164,8 @@ services:
     environment:
       IngestQueue__ConnectionString: "Endpoint=sb://sb-emulator;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true"
       IngestQueue__QueueName: "ingest-jobs"
-      BlobStorage__ConnectionString: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEYmQOFKnX3KZkqx6E6F9/V0WoTpfDqInQjsXVgmH6PMrJVF3qqXkAEcA==;BlobEndpoint=http://azurite:10000/devstoreaccount1;"
+      # Same Azurite shorthand as worker; see IngestWorker__Blob__ConnectionString.
+      BlobStorage__ConnectionString: "UseDevelopmentStorage=true;DevelopmentStorageProxyUri=http://azurite"
       BlobStorage__ContainerName: "sources"
       # Enable the dev-mode upload escape hatch in api Program.cs.
       # Anonymous requests can pass `contributorId` as a form field
