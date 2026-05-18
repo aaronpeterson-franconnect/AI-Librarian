@@ -65,6 +65,29 @@ SELECT count(*) AS user_rows  FROM users       WHERE id = '${CONTRIBUTOR_ID}';
 SQL
 pass "department + contributor seeded"
 
+echo "=== Pre-step: settle delay (api may be up but Azurite/SB lazy-init pending) ==="
+# The api's BlobUploadService runs CreateIfNotExistsAsync on the
+# `sources` container at first upload; the ServiceBusClient connects
+# lazily on first publish. If Azurite or SB aren't fully ready when
+# /health passes, the first upload races them. 15s settle covers the
+# slow path. Local: usually unnecessary; CI: catches the race.
+sleep 15
+
+# Also probe SB emulator's management API (port 5300) so we know
+# whether to even attempt an upload. Returns 200 once the namespace
+# is provisioned in SQL Edge.
+SB_READY=0
+for i in $(seq 1 20); do
+	if docker exec ailib-api curl -sf "http://sb-emulator:5300/health/status" -o /dev/null 2>/dev/null \
+		|| curl -sf "http://localhost:5300/health/status" -o /dev/null 2>/dev/null; then
+		SB_READY=1
+		break
+	fi
+	echo "  sb-emulator readiness probe $i/20..."
+	sleep 3
+done
+[ "${SB_READY}" = "1" ] && pass "sb-emulator HTTP management is up" || echo "  WARN: sb-emulator HTTP probe never returned 200; upload may still work if AMQP is up"
+
 echo "=== STEP 2: upload a sample markdown file via /api/portal/sources/upload ==="
 # Sample content the Markdown skill will chunk. ~200 chars so we get
 # a single chunk back (worker chunker defaults to ~1500 chars/chunk).
@@ -80,16 +103,24 @@ If this file's content shows up in source_chunks.content_markdown,
 the full upload-to-DB round trip works end-to-end.
 MARKDOWN
 
-UPLOAD=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE}/api/portal/sources/upload" \
+# Verbose curl + max-time so a hang doesn't masquerade as a 502.
+# stderr captured separately so the curl-side error is visible if
+# the HTTP layer never returns a status code.
+UPLOAD_OUT=$(mktemp)
+UPLOAD_ERR=$(mktemp)
+CODE=$(curl --max-time 60 -sS -o "${UPLOAD_OUT}" -w "%{http_code}" \
+	-X POST "${API_BASE}/api/portal/sources/upload" \
 	-F "file=@${SAMPLE_FILE};type=text/markdown" \
 	-F "departmentId=${DEPT_ID}" \
 	-F "classification=Internal" \
 	-F "title=Phase B Smoke Sample" \
-	-F "contributorId=${CONTRIBUTOR_ID}")
-CODE=$(echo "${UPLOAD}" | tail -n1)
-BODY=$(echo "${UPLOAD}" | head -n -1)
+	-F "contributorId=${CONTRIBUTOR_ID}" 2>"${UPLOAD_ERR}" || true)
+BODY=$(head -c 800 "${UPLOAD_OUT}")
+ERR=$(head -c 800 "${UPLOAD_ERR}")
 echo "  status: ${CODE}"
-echo "  body (first 300 chars): ${BODY:0:300}"
+echo "  body:   ${BODY}"
+echo "  stderr: ${ERR}"
+rm -f "${UPLOAD_OUT}" "${UPLOAD_ERR}"
 [ "${CODE}" = "200" ] \
 	&& pass "/api/portal/sources/upload returned 200" \
 	|| fail "upload returned ${CODE} -- check api logs (blob/sb config?)"
